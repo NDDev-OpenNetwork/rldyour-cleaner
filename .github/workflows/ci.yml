@@ -28,7 +28,10 @@ jobs:
           sudo apt-get install --no-install-recommends -y shellcheck
 
       - name: actionlint — workflow semantics
-        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 && actionlint
+        run: |
+          # GOPATH/bin is not on the runner PATH — invoke by absolute path.
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint"
 
       - name: Rust style
         run: |
