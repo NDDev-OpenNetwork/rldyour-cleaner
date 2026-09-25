@@ -2,6 +2,8 @@
 /target/
 *.rlib
 *.rmeta
+/dist/
+*.sha256
 
 # Local state
 *.log

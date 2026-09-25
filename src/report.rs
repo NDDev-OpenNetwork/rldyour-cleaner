@@ -1,6 +1,7 @@
 //! Run report — printed to stdout (the scheduler's log picks it up) and
 //! persisted to `os::state_dir()/last-run.json` for `status`.
 
+use crate::homecache::CacheResult;
 use serde::Serialize;
 use std::path::Path;
 use std::time::SystemTime;
@@ -30,7 +31,13 @@ pub struct Report {
     pub deleted: usize,
     pub skipped: usize,
     pub failed: usize,
+    /// Matched artifact dirs still inside their age gate (kept).
+    pub fresh_matched: usize,
+    /// Bytes inside all stale candidates — the reclaimable picture.
+    pub stale_bytes: u64,
     pub entries: Vec<Entry>,
+    /// Per-cache outcomes — otherwise freed_bytes arrives unexplained.
+    pub caches: Vec<CacheResult>,
 }
 
 pub fn now_unix() -> u64 {
@@ -54,7 +61,10 @@ impl Report {
             deleted: 0,
             skipped: 0,
             failed: 0,
+            fresh_matched: 0,
+            stale_bytes: 0,
             entries: Vec::new(),
+            caches: Vec::new(),
         }
     }
 

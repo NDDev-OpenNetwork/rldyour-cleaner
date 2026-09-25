@@ -39,3 +39,25 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
   published only after every leg uploads; binaries for linux-x86_64,
   linux-aarch64, macos-aarch64, macos-x86_64, windows-x86_64, each with a
   `.sha256`.
+
+### Fixed
+
+- `protect` patterns now expand `~` like `roots`/`extra_cache_paths` —
+  `protect = ["~/x"]` previously never matched.
+- `path_guard` actually re-proves a candidate's kind from its path shape
+  (nested `incremental`/`flutter_build` shapes spelled out; other kinds
+  round-trip through the rule table) — the comment claimed it, the code
+  did not.
+- macOS trash uses `~/.Trash`; the freedesktop `Trash/files` path was
+  wrongly emitted under `cfg!(unix)`.
+- devin `_versions` pruning fails closed when `current` is missing or
+  dangling (could otherwise delete every installed version), checks
+  liveness per version dir and for the `_download` staging dir, and
+  removes trees rename-first — Windows can no longer half-gut a held
+  version mid-`remove_dir_all`.
+- The pending-dir reaper no longer crosses filesystem boundaries, matching
+  the scanner's mount guard.
+- `--dry-run` and real runs share one cache-spec pipeline — trash and the
+  cargo registry are no longer invisible to previews.
+- Reports carry per-cache `CacheResult`s plus `fresh_matched`/`stale_bytes`,
+  so `status` and the JSON audit trail explain every cache decision.

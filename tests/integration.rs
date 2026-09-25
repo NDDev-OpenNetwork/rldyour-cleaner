@@ -244,6 +244,31 @@ fn held_cargo_lock_blocks_target_deletion() {
 }
 
 #[test]
+fn mismatched_kind_and_path_is_refused() {
+    // A Candidate built by hand with a name that does not match its kind must
+    // not get past path_guard — the shape check exists for callers that did
+    // not come from scan's own matching.
+    let root = fixture("shape");
+    let dir = root.join("proj/random_dir");
+    fs::create_dir_all(&dir).unwrap();
+    age_tree(&dir, 40);
+
+    let c = Candidate {
+        path: dir.clone(),
+        kind: rldyour_cleaner::kinds::Kind::RustTarget,
+        size_bytes: 0,
+        newest: None,
+        project_root: None,
+    };
+    let policy = policy_for(&root);
+    match safety::guard(&c, &policy) {
+        Err(s) if s.reason == "shape" => {}
+        other => panic!("expected shape refusal, got {:?}", other.is_ok()),
+    }
+    assert!(dir.exists());
+}
+
+#[test]
 fn incremental_inside_warm_target_gets_shorter_leash() {
     let root = fixture("incremental");
     let proj = root.join("crate");

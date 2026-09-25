@@ -54,12 +54,38 @@ fn path_guard(c: &Candidate, policy: &Policy) -> Result<PathBuf, Skip> {
     if name.is_empty() || c.path.components().count() < 4 {
         return Err(skip("shallow", "refusing a suspiciously shallow path"));
     }
-    // Rule names are exact; a path whose basename doesn't round-trip the rule
-    // table can't have been matched by scan and must not be deletable either.
     let canon = c
         .path
         .canonicalize()
         .map_err(|e| skip("canonicalize", e.to_string()))?;
+    // Round-trip the candidate through its own matching rules: a path whose
+    // shape no longer proves its kind must not be deletable. `incremental`
+    // and `flutter_build` are emitted by scan's nested-candidate paths, so
+    // their expected shape is spelled out rather than re-run through RULES.
+    let shape_ok = match c.kind {
+        Kind::RustIncremental => {
+            name == "incremental"
+                && canon
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(|g| g.file_name())
+                    .is_some_and(|n| n == "target")
+        }
+        Kind::DartToolBuild => {
+            name == "flutter_build"
+                && canon
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .is_some_and(|n| n == ".dart_tool")
+        }
+        _ => crate::kinds::match_dir(&canon) == Some(c.kind),
+    };
+    if !shape_ok {
+        return Err(skip(
+            "shape",
+            "path no longer proves its kind (name/marker mismatch)",
+        ));
+    }
     for pat in &policy.protect {
         if !pat.is_empty() && canon.to_string_lossy().contains(pat.as_str()) {
             return Err(skip(

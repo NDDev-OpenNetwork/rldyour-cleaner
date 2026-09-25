@@ -243,7 +243,13 @@ impl Default for Policy {
 fn policy_from(f: FilePolicy) -> Policy {
     Policy {
         roots: f.roots.iter().map(|r| expand_home(r)).collect(),
-        protect: f.protect,
+        // Protect patterns are substrings of canonical paths — expand `~`
+        // the same way `roots` does, or "~/x" would silently never match.
+        protect: f
+            .protect
+            .iter()
+            .map(|p| expand_home(p).to_string_lossy().into_owned())
+            .collect(),
         stale_days: f.stale_days,
         dep_stale_days: f.dep_stale_days,
         incremental_days: f.incremental_days,
@@ -279,8 +285,9 @@ pub const DEFAULT_CONFIG: &str = r#"# rldyour-cleaner policy — every field is 
 # Directories scanned for project build artifacts (target/, node_modules/, ...).
 roots = ["~/Developer"]
 
-# Extra path substrings that must never be deleted (matched against the full
-# candidate path). Example: protect = ["client-abonmarket-frontend"]
+# Extra path substrings that must never be deleted (matched against the
+# canonical candidate path; a leading ~ expands like in `roots`).
+# Example: protect = ["~/Developer/client-abonmarket-frontend"]
 protect = []
 
 # --- routine thresholds (days) ---
@@ -342,6 +349,17 @@ mod tests {
         assert_eq!(f.stale_days, 3);
         assert_eq!(f.dep_stale_days, 30);
         assert_eq!(f.roots, vec!["~/src".to_string()]);
+    }
+
+    #[test]
+    fn protect_patterns_expand_tilde() {
+        let f: FilePolicy = toml::from_str("protect = [\"~/keep-this\", \"literal-sub\"]").unwrap();
+        let p = policy_from(f);
+        assert_eq!(
+            p.protect[0],
+            crate::os::home_dir().join("keep-this").to_string_lossy()
+        );
+        assert_eq!(p.protect[1], "literal-sub");
     }
 
     #[test]

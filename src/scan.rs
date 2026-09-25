@@ -17,7 +17,9 @@ pub struct Candidate {
     pub size_bytes: u64,
     /// Newest mtime anywhere inside the candidate.
     pub newest: Option<SystemTime>,
-    /// Project root for project-gated kinds (candidate's parent dir).
+    /// For project-gated kinds: the enclosing project dir — its process
+    /// scope. For `RustIncremental`: the enclosing `target` dir — its cargo
+    /// lock scope. `None` for kinds that guard themselves.
     pub project_root: Option<PathBuf>,
 }
 

@@ -6,7 +6,6 @@
 //! their `.rldyour-cleaner-pending` names make them identifiable.
 
 use crate::safety::Prepared;
-use crate::scan::Candidate;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,15 +13,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub const PENDING_PREFIX: &str = ".rldyour-cleaner-pending";
-
-fn pending_name(c: &Candidate) -> String {
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(
-        "{PENDING_PREFIX}-{}-{}-{n}",
-        std::process::id(),
-        c.path.file_name().and_then(|x| x.to_str()).unwrap_or("dir")
-    )
-}
 
 /// Why `execute` did not free anything. `Busy` is not an error — it is the
 /// OS's own liveness verdict: on Windows a tree that a process sits in,
@@ -39,8 +29,20 @@ pub enum ExecuteError {
 /// Windows: ERROR_ACCESS_DENIED (5), ERROR_SHARING_VIOLATION (32),
 /// ERROR_LOCK_VIOLATION (33). Unix rename has no such semantics — every
 /// failure there is a genuine error.
-fn is_busy_error(e: &std::io::Error) -> bool {
+pub(crate) fn is_busy_error(e: &std::io::Error) -> bool {
     cfg!(windows) && matches!(e.raw_os_error(), Some(5) | Some(32) | Some(33))
+}
+
+/// The sibling a directory is renamed to before removal — the same contract
+/// `execute` uses, exposed for deleters outside the candidate pipeline
+/// (e.g. homecache's version dirs) so every removal is rename-first.
+pub(crate) fn pending_sibling(path: &Path) -> PathBuf {
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let name = path.file_name().and_then(|x| x.to_str()).unwrap_or("dir");
+    path.with_file_name(format!(
+        "{PENDING_PREFIX}-{}-{name}-{n}",
+        std::process::id()
+    ))
 }
 
 /// Rename the candidate aside and delete it. Takes the `Prepared` — not just
@@ -52,11 +54,7 @@ pub fn execute(p: &Prepared<'_>) -> Result<u64, ExecuteError> {
     if !c.path.exists() {
         return Err(ExecuteError::Failed("already gone".into()));
     }
-    let pending = c
-        .path
-        .parent()
-        .ok_or_else(|| ExecuteError::Failed("no parent dir".to_string()))?
-        .join(pending_name(c));
+    let pending = pending_sibling(&c.path);
     fs::rename(&c.path, &pending).map_err(|e| {
         if is_busy_error(&e) {
             ExecuteError::Busy(format!("the OS refuses the rename: {e}"))
@@ -92,10 +90,16 @@ pub fn reap_pending(roots: &[PathBuf], min_age_secs: u64) -> (usize, Vec<String>
     let mut notes = Vec::new();
     let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(min_age_secs);
     for root in roots {
+        let root_dev = crate::os::device_id(root);
         let mut iter = walkdir::WalkDir::new(root).follow_links(false).into_iter();
         while let Some(entry) = iter.next() {
             let Ok(e) = entry else { continue };
             if e.depth() == 0 || !e.file_type().is_dir() {
+                continue;
+            }
+            // Same boundary rule as the scanner: never cross mounts.
+            if crate::os::device_id(e.path()) != root_dev {
+                iter.skip_current_dir();
                 continue;
             }
             let name = e.file_name().to_str().unwrap_or("");

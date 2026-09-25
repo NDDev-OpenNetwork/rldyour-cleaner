@@ -106,6 +106,8 @@ fn cmd_run(policy: &config::Policy, mode: Mode) -> i32 {
     let scan_only = matches!(mode, Mode::Scan { .. });
     let verbose = matches!(mode, Mode::Scan { verbose: true, .. });
     let mut report = Report::new(pressure, dry_run, use_pct);
+    report.fresh_matched = outcome.fresh_count;
+    report.stale_bytes = outcome.bytes_seen;
 
     for c in &outcome.stale {
         // `prepared` must stay bound through `execute` — dropping it releases
@@ -183,75 +185,59 @@ fn cmd_run(policy: &config::Policy, mode: Mode) -> i32 {
         return 0;
     }
 
-    // `run`: home caches, then the pending-dir reaper — neither mutates under
-    // --dry-run, which shows an honest preview instead.
-    let mut cache_results = Vec::new();
-    if !dry_run {
-        if policy.categories.home_caches {
-            let mut specs =
-                homecache::specs(ages.cache_entry, ages.dep_stale, &policy.extra_cache_paths);
-            if policy.categories.trash
-                && let Some(t) = homecache::trash_spec(ages.dep_stale)
-            {
-                specs.push(t);
-            }
-            if policy.categories.cargo_registry {
-                specs.push(homecache::cargo_registry_spec(ages.cache_entry));
-            }
-            for spec in &specs {
-                if !spec.paths.iter().any(|p| p.is_dir()) {
-                    continue;
-                }
-                if spec.pressure_only && !pressure {
-                    cache_results.push(homecache::CacheResult {
-                        id: spec.id.into(),
-                        freed_bytes: 0,
-                        detail: "reserved for disk-pressure runs".into(),
-                    });
-                    continue;
-                }
-                if spec.paths.iter().any(|p| !path_allowed(p, policy)) {
-                    cache_results.push(homecache::CacheResult {
-                        id: spec.id.into(),
-                        freed_bytes: 0,
-                        detail: "protected".into(),
-                    });
-                    continue;
-                }
-                let r = homecache::process(spec);
-                report.freed_bytes += r.freed_bytes;
-                if r.freed_bytes > 0 {
-                    report.deleted += 1;
-                }
-                cache_results.push(r);
-            }
+    // `run`: home caches, then the pending-dir reaper. One loop serves both
+    // modes — --dry-run swaps process() for preview(), which answers what
+    // each cache *would* free without mutating anything.
+    if policy.categories.home_caches {
+        let mut specs =
+            homecache::specs(ages.cache_entry, ages.dep_stale, &policy.extra_cache_paths);
+        if policy.categories.trash
+            && let Some(t) = homecache::trash_spec(ages.dep_stale)
+        {
+            specs.push(t);
         }
+        if policy.categories.cargo_registry {
+            specs.push(homecache::cargo_registry_spec(ages.cache_entry));
+        }
+        for spec in &specs {
+            if !spec.paths.iter().any(|p| p.is_dir()) {
+                continue;
+            }
+            if spec.pressure_only && !pressure {
+                report.caches.push(homecache::CacheResult {
+                    id: spec.id.into(),
+                    freed_bytes: 0,
+                    detail: "reserved for disk-pressure runs".into(),
+                });
+                continue;
+            }
+            if spec.paths.iter().any(|p| !path_allowed(p, policy)) {
+                report.caches.push(homecache::CacheResult {
+                    id: spec.id.into(),
+                    freed_bytes: 0,
+                    detail: "protected".into(),
+                });
+                continue;
+            }
+            let r = if dry_run {
+                homecache::preview(spec)
+            } else {
+                homecache::process(spec)
+            };
+            report.freed_bytes += r.freed_bytes;
+            if r.freed_bytes > 0 {
+                report.deleted += 1;
+            }
+            report.caches.push(r);
+        }
+    }
+    if !dry_run {
         let (reaped, reaped_notes) = clean::reap_pending(&policy.roots, 3600);
         if reaped > 0 {
             println!("reaped {reaped} leftover pending dir(s)");
         }
         for n in reaped_notes {
             eprintln!("reap: {n}");
-        }
-    } else if policy.categories.home_caches {
-        // Dry-run: preview() reports what each cache *would* free, not the
-        // cache's total size — the two differ by orders of magnitude.
-        for spec in &homecache::specs(ages.cache_entry, ages.dep_stale, &policy.extra_cache_paths) {
-            if !spec.paths.iter().any(|p| p.is_dir()) {
-                continue;
-            }
-            if spec.paths.iter().any(|p| !path_allowed(p, policy)) {
-                continue;
-            }
-            if spec.pressure_only && !pressure {
-                continue;
-            }
-            let r = homecache::preview(spec);
-            report.freed_bytes += r.freed_bytes;
-            if r.freed_bytes > 0 {
-                report.deleted += 1;
-            }
-            cache_results.push(r);
         }
     }
 
@@ -262,7 +248,7 @@ fn cmd_run(policy: &config::Policy, mode: Mode) -> i32 {
         report.save(&os::state_dir());
     }
     report.print_summary();
-    for r in &cache_results {
+    for r in &report.caches {
         println!(
             "  cache {:<16} {} — {}",
             r.id,
