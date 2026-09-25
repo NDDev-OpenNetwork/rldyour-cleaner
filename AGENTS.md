@@ -23,8 +23,8 @@ platform) and `platforms/<os>/` (scheduler + installer assets).
 | `src/report.rs` | JSON report persisted to `os::state_dir()/last-run.json` |
 | `platforms/linux/` | systemd units + tmpfiles.d override (/tmp 30d→7d) |
 | `platforms/macos/` | launchd plist, `@HOME@` templated |
-| `install.sh` / `uninstall.sh` | Linux + macOS dispatcher |
-| `install.ps1` / `uninstall.ps1` | Windows — Task Scheduler |
+| `install.sh` / `uninstall.sh` | Linux + macOS dispatcher (`install -m`, not `-D` — GNU-only) |
+| `install.ps1` / `uninstall.ps1` | Windows — Task Scheduler via `Register-ScheduledTask` (StartWhenAvailable ≈ systemd `Persistent`) |
 
 ## Invariants (do not break these)
 

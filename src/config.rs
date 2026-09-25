@@ -49,14 +49,16 @@ pub struct Categories {
     pub projects: bool,
     /// `target/*/incremental` gets its own (shorter) age gate.
     pub incremental: bool,
-    /// Tool caches under `$HOME` (`~/.cache/*`, `~/.bun`, `~/.npm`, ...).
+    /// Tool caches under the user's home (`~/.cache/*`, `~/.bun`, ...).
     pub home_caches: bool,
-    /// Old `~/.local/share/devin/cli/_versions/*` except `current`.
+    /// Old `devin/cli/_versions/*` under the platform devin data dir,
+    /// except `current`.
     pub devin_versions: bool,
     /// `~/.cargo/registry` — off: cargo's built-in gc owns it (stable since
     /// Rust 1.88). Enable only on toolchains older than that.
     pub cargo_registry: bool,
-    /// `~/.local/share/Trash` — off: deleted files are user data, not cache.
+    /// The platform trash dir (`~/.local/share/Trash`, `~/.Trash`) — off:
+    /// deleted files are user data, not cache.
     pub trash: bool,
 }
 

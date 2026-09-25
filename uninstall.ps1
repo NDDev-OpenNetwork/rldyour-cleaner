@@ -16,7 +16,8 @@ $TaskName = 'rldyour-cleaner'
 function Say($msg) { Write-Host "==> $msg" -ForegroundStyle Cyan }
 
 Say 'Deleting the scheduled task'
-& schtasks.exe /Delete /F /TN $TaskName 2>$null | Out-Null
+Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false `
+    -ErrorAction SilentlyContinue
 
 Say 'Removing the binary'
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $InstallDir

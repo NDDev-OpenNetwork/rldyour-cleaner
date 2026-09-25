@@ -133,7 +133,7 @@ src/
 platforms/
   linux/       systemd units + tmpfiles.d override
   macos/       launchd plist (@HOME@ substituted at install)
-  windows/     (scheduled task is created by install.ps1)
+install.ps1 / uninstall.ps1   Windows — registers a Task Scheduler task
 ```
 
 ## Verify / develop

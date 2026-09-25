@@ -177,7 +177,11 @@ fn protected_substring_blocks_deletion() {
 
 #[test]
 fn process_holding_project_blocks_node_modules() {
-    if !cfg!(target_os = "linux") {
+    // Unix liveness probes (/proc on Linux, lsof elsewhere) see a foreign
+    // process's cwd; on Windows the probe is deletion-time locking, which
+    // this test cannot exercise — the guard there is covered by Busy-mapped
+    // rename refusals, not an enumeration.
+    if !cfg!(unix) {
         return;
     }
     let root = fixture("proc-held");
@@ -232,7 +236,7 @@ fn held_cargo_lock_blocks_target_deletion() {
         .unwrap();
     f.lock_exclusive().unwrap();
     let verdict = safety::guard(&stale[0], &policy);
-    f.unlock().unwrap();
+    FileExt::unlock(&f).unwrap();
     match verdict {
         Err(s) if s.reason == "locked" => {}
         _ => panic!("expected locked skip while .cargo-lock is held"),

@@ -13,7 +13,7 @@ from tool caches under the user's home. Runs unattended from the OS scheduler \
 `scan` never deletes anything."
 )]
 pub struct Cli {
-    /// Policy file to read (default: ~/.config/rldyour-cleaner/config.toml)
+    /// Policy file to read (default: the platform config dir — see `config`)
     #[arg(short, long, global = true, value_name = "FILE")]
     pub config: Option<PathBuf>,
     #[command(subcommand)]

@@ -24,18 +24,21 @@ say "Building rldyour-cleaner"
 cargo build --release --manifest-path "${ROOT}/Cargo.toml"
 
 say "Installing the binary into ${BIN_DIR}"
-install -Dm755 "${ROOT}/target/release/rldyour-cleaner" \
+# `install -D` is GNU coreutils only — mkdir + install -m works on BSD/macOS.
+mkdir -p "${BIN_DIR}"
+install -m755 "${ROOT}/target/release/rldyour-cleaner" \
   "${BIN_DIR}/rldyour-cleaner"
 
 if [ "${OS}" = "Linux" ]; then
   UNIT_DIR="${HOME}/.config/systemd/user"
-  CONF_DIR="${HOME}/.config/rldyour-cleaner"
+  CONF_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/rldyour-cleaner"
   TMPFILES_DROPIN="${ROOT}/platforms/linux/tmpfiles.d/tmp.conf"
 
   say "Installing the user units into ${UNIT_DIR}"
-  install -Dm644 "${ROOT}/platforms/linux/systemd/rldyour-cleaner.service" \
+  mkdir -p "${UNIT_DIR}"
+  install -m644 "${ROOT}/platforms/linux/systemd/rldyour-cleaner.service" \
     "${UNIT_DIR}/rldyour-cleaner.service"
-  install -Dm644 "${ROOT}/platforms/linux/systemd/rldyour-cleaner.timer" \
+  install -m644 "${ROOT}/platforms/linux/systemd/rldyour-cleaner.timer" \
     "${UNIT_DIR}/rldyour-cleaner.timer"
 
   if [ ! -f "${CONF_DIR}/config.toml" ]; then
@@ -50,7 +53,7 @@ if [ "${OS}" = "Linux" ]; then
 
   if sudo -n true 2>/dev/null; then
     say "Installing the /tmp aging override (7d) into /etc/tmpfiles.d"
-    sudo install -Dm644 "${TMPFILES_DROPIN}" /etc/tmpfiles.d/tmp.conf
+    sudo install -m644 "${TMPFILES_DROPIN}" /etc/tmpfiles.d/tmp.conf
     sudo systemd-tmpfiles --clean tmp.conf >/dev/null 2>&1 || true
   else
     cat <<'NOTE'
@@ -58,7 +61,7 @@ if [ "${OS}" = "Linux" ]; then
 No passwordless sudo — the /tmp aging override was NOT installed. To age
 /tmp entries out after 7 days (distro default is 30), run once:
 
-    sudo install -Dm644 platforms/linux/tmpfiles.d/tmp.conf /etc/tmpfiles.d/tmp.conf
+    sudo install -m644 platforms/linux/tmpfiles.d/tmp.conf /etc/tmpfiles.d/tmp.conf
     sudo systemd-tmpfiles --clean
 
 NOTE
