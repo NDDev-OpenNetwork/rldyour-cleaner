@@ -117,6 +117,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - run: gh release edit "$GITHUB_REF_NAME" --draft=false
+      # No checkout on this leg — gh needs -R to resolve the repository.
+      - run: gh release edit "$GITHUB_REF_NAME" --draft=false -R "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
