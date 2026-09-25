@@ -1,0 +1,5 @@
+# Dev/CI toolchain: stable with the components the checks need.
+# rust-version in Cargo.toml (1.88) remains the MSRV contract.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

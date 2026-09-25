@@ -64,10 +64,15 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings          # linux
 cargo check --all-targets --target aarch64-apple-darwin
 cargo check --all-targets --target x86_64-pc-windows-msvc
+cargo check --all-targets --target aarch64-unknown-linux-gnu
 cargo test
 shellcheck install.sh uninstall.sh
+actionlint
 ```
 
-CI runs fmt + clippy + shellcheck + plist validation on Linux, tests on
-ubuntu/macos/windows, an MSRV (1.88) check, and tag pushes (`v*`) release
-prebuilt binaries for all three platforms.
+CI runs fmt + clippy + shellcheck + plist/systemd-unit/actionlint
+validation on Linux, tests on ubuntu/macos/windows, cross-target `cargo
+check` for every release triple, and an MSRV (1.88) job. Tag pushes (`v*`)
+build a draft release that is published only after all five platform legs
+upload (linux x86_64+aarch64, macos aarch64+x86_64, windows x86_64); the
+tag must equal `version` in `Cargo.toml`.

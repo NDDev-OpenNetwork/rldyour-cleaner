@@ -6,6 +6,7 @@ on:
   pull_request:
   schedule:
     - cron: '0 6 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,18 +17,48 @@ concurrency:
 
 jobs:
   lint:
-    name: Lint and scripts
+    name: Lint, scripts and cross-checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: |
+
+      - name: Install shellcheck (also feeds actionlint's run-block checks)
+        run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y shellcheck
+
+      - name: actionlint — workflow semantics
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 && actionlint
+
+      - name: Rust style
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Cross-target compile smoke (no link — catches cfg bugs pre-release)
+        run: |
+          rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin aarch64-unknown-linux-gnu
+          for t in x86_64-pc-windows-msvc aarch64-apple-darwin aarch64-unknown-linux-gnu; do
+            cargo check --locked --all-targets --target "$t"
+          done
+
       - run: shellcheck install.sh uninstall.sh
+
       - name: Validate the launchd plist
         run: python3 -c 'import plistlib; plistlib.load(open("platforms/macos/launchd/io.nddev.rldyour-cleaner.plist","rb"))'
+
+      - name: Verify the systemd units
+        run: |
+          # Exec path must exist for verify; give it a stub.
+          mkdir -p "$HOME/.local/bin"
+          install -m755 /dev/null "$HOME/.local/bin/rldyour-cleaner"
+          # `verify` exits 0 even on real errors, so the gate is the output:
+          # any line naming our units is a finding.
+          out=$(systemd-analyze verify \
+            platforms/linux/systemd/rldyour-cleaner.service \
+            platforms/linux/systemd/rldyour-cleaner.timer 2>&1)
+          echo "$out"
+          ! grep -q rldyour-cleaner <<<"$out"
 
   test:
     name: Tests (${{ matrix.os }})
@@ -38,14 +69,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: cargo test
+      - run: cargo test --locked
       - name: Parse the PowerShell scripts
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           foreach ($f in 'install.ps1', 'uninstall.ps1') {
-            $null = [scriptblock]::Create((Get-Content $f -Raw))
-            if ($?) { Write-Host "$f parses" } else { exit 1 }
+            try {
+              $null = [scriptblock]::Create((Get-Content $f -Raw))
+              Write-Host "$f parses"
+            } catch {
+              Write-Error "$f failed to parse: $_"
+              exit 1
+            }
           }
 
   msrv:

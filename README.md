@@ -143,9 +143,27 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 shellcheck install.sh uninstall.sh
-systemd-analyze --user verify platforms/linux/systemd/*  # on Linux
+actionlint                                     # workflow semantics
+systemd-analyze verify platforms/linux/systemd/*   # on Linux
 ```
 
-CI runs fmt + clippy + shellcheck on Linux and tests on
-ubuntu/macos/windows; a `v*` tag builds and publishes release binaries for
-all three.
+`rust-toolchain.toml` pins stable + rustfmt/clippy for everyone; MSRV is
+`rust-version` in `Cargo.toml` and is exercised in CI against 1.88.0.
+
+## CI / release
+
+CI lints (fmt, clippy, shellcheck, actionlint, plist + systemd-unit
+verification), runs the tests on ubuntu/macos/windows, and `cargo check`s
+every release target so cross-compile bugs surface in the PR, not at tag
+time.
+
+A `v*` tag publishes binaries — the release stays a **draft** until all
+legs upload, so a failed build never ships a partial release. The tag must
+equal `version` in `Cargo.toml`.
+
+```sh
+git tag -s v0.2.0 -m v0.2.0 && git push --tags
+```
+
+Assets: `linux-x86_64`, `linux-aarch64`, `macos-aarch64`, `macos-x86_64`,
+`windows-x86_64`, each with a `.sha256` checksum.

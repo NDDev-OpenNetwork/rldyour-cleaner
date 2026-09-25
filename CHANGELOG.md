@@ -31,6 +31,11 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
   portable via `fs2` (`statvfs`/`GetDiskFreeSpaceEx`); `libc` dep dropped.
 - Installers per OS (`install.sh` dispatch + `install.ps1`), `uninstall.*`;
   `tmpfiles.d` drop-in aging `/tmp` to 7 days (Linux).
-- CI: fmt + clippy + shellcheck + plist validation on Linux, tests on
-  ubuntu/macos/windows, MSRV 1.88 check; `v*` tags build and publish release
-  binaries for linux-x86_64, macos-aarch64, windows-x86_64.
+- CI: fmt + clippy + shellcheck + plist/systemd-unit/actionlint validation
+  on Linux, tests on ubuntu/macos/windows, cross-target `cargo check` for
+  every release triple, MSRV 1.88 job; `rust-toolchain.toml` pins the
+  dev toolchain.
+- Releases (`v*` tags): tag must match `Cargo.toml` version; draft release
+  published only after every leg uploads; binaries for linux-x86_64,
+  linux-aarch64, macos-aarch64, macos-x86_64, windows-x86_64, each with a
+  `.sha256`.
