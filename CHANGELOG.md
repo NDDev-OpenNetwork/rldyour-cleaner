@@ -6,6 +6,16 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-09-25
+
+### Fixed
+
+- macOS/BSD liveness probes take a fresh `lsof` snapshot per call: the
+  once-per-process cache froze the process map at first probe and could
+  miss a build started mid-run (and made the suite flaky).
+- Release `publish` leg resolves the repo via `-R` — it has no checkout,
+  so `gh` could not find a repository and the draft stayed draft.
+
 ## [0.0.1] - 2026-09-25
 
 ### Added

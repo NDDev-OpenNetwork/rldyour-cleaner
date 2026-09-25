@@ -1,6 +1,6 @@
 [package]
 name = "rldyour-cleaner"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 rust-version = "1.88" # let-chains in `if`; also the floor for cargo's own GC behavior we rely on
 license = "AGPL-3.0-or-later"

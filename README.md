@@ -10,7 +10,7 @@ periodic batch work; a sleeping process would only be one more thing to fail.
 | OS | Scheduler | Temp dirs | Process liveness probe |
 |---|---|---|---|
 | Linux | `systemd --user` timer (daily) | `tmpfiles.d` override → `/tmp` aged at 7d | `/proc`: exe/cwd/fd/maps per candidate |
-| macOS | launchd agent (daily 03:00) | built-in periodic/`/tmp` cleaner — untouched | `lsof` snapshot once per run |
+| macOS | launchd agent (daily 03:00) | built-in periodic/`/tmp` cleaner — untouched | `lsof` snapshot per probe |
 | Windows | Task Scheduler (daily 03:00) | Storage Sense is the OS mechanism — untouched | mandatory file locking is the guard (rename/remove of a held tree fails → safe skip) |
 
 ## Why it can't hurt your builds
@@ -162,7 +162,7 @@ legs upload, so a failed build never ships a partial release. The tag must
 equal `version` in `Cargo.toml`.
 
 ```sh
-git tag -s v0.0.1 -m v0.0.1 && git push --tags
+git tag -s v0.0.2 -m v0.0.2 && git push --tags
 ```
 
 Assets: `linux-x86_64`, `linux-aarch64`, `macos-aarch64`, `macos-x86_64`,

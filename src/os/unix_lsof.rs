@@ -1,10 +1,12 @@
 //! Non-Linux unix process liveness — macOS and the BSDs have no `/proc`, so
 //! `lsof` (which ships with the OS) is the equivalent probe.
 //!
-//! A full-system `lsof` dump takes ~1s, far too expensive per candidate, so
-//! one snapshot is taken per process invocation and prefix-matched per
-//! scope. It can lag by at most the run's own duration; the freshness
-//! recheck at delete time and the cargo-lock interlock bound that window.
+//! Every probe takes a fresh snapshot: a cached one would freeze the
+//! process map at first call and miss a build that started mid-run —
+//! exactly the race this guard exists to prevent. `lsof` costs ~1s and
+//! runs only for already-stale candidates and cache paths (tens of calls
+//! per run, not per tree entry), which is the right price for fail-closed
+//! freshness.
 //!
 //! `None` = `lsof` could not run — fail closed, every candidate counts as
 //! in use.
@@ -12,13 +14,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
-
-static SNAP: OnceLock<Option<HashMap<u32, Vec<PathBuf>>>> = OnceLock::new();
-
-fn snapshot() -> Option<&'static HashMap<u32, Vec<PathBuf>>> {
-    SNAP.get_or_init(take_snapshot).as_ref()
-}
 
 /// `lsof -nP -F pn` emits machine-parseable field lines: `p<pid>` then
 /// `n<name>` for each open file, `cwd`, and `txt` (mapped executables and
@@ -56,7 +51,7 @@ pub fn pids_using(dir: &Path) -> Option<Vec<u32>> {
     // lsof reports resolved paths; canonicalize so a symlinked root
     // (e.g. /tmp -> private/tmp) still matches.
     let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-    let snap = snapshot()?;
+    let snap = take_snapshot()?;
     let own = std::process::id();
     let mut hits: Vec<u32> = snap
         .iter()

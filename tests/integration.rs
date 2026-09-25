@@ -201,7 +201,7 @@ fn process_holding_project_blocks_node_modules() {
         .current_dir(&proj)
         .spawn()
         .expect("spawn sleep");
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    std::thread::sleep(std::time::Duration::from_millis(300));
     let verdict = safety::guard(&stale[0], &policy);
     let mut child = child;
     let _ = child.kill();
