@@ -1,0 +1,32 @@
+[Unit]
+Description=Reclaim disk space from stale build artifacts and tool caches
+Documentation=https://github.com/NDDev-OpenNetwork/rldyour-cleaner
+ConditionPathExists=%h/.local/bin/rldyour-cleaner
+
+[Service]
+Type=oneshot
+# Idle-class everything: a janitor must never contend with the builds it
+# cleans up after.
+Nice=19
+IOSchedulingClass=idle
+# A 200 GB remove_dir_all at idle IO takes minutes; a wedged one must still
+# not run forever.
+TimeoutStartSec=30min
+ExecStart=%h/.local/bin/rldyour-cleaner run
+# The unit's PATH is minimal by default; user-installed toolchains (uv, go,
+# pnpm) live under %h, and the cleaner delegates cache GC to them when found.
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:%h/go/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+
+# Hardening — seccomp-based only. Namespace/capability directives
+# (ProtectSystem, PrivateDevices, CapabilityBoundingSet, ...) need userns
+# support that some user managers lack (they fail with 218/CAPABILITIES or
+# get ignored), so the sandbox boundary stays inside the tool: roots
+# allowlist, protect list, symlink/mount refusal.
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+SystemCallArchitectures=native

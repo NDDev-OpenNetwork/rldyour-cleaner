@@ -1,0 +1,7 @@
+# Build output
+/target/
+*.rlib
+*.rmeta
+
+# Local state
+*.log

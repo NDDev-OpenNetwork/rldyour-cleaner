@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily reclaim of stale build artifacts and tool caches
+
+[Timer]
+# Boot catch-up plus a daily slot; Persistent covers missed runs after
+# suspend/downtime, RandomizedDelay keeps it off the top of the hour.
+OnStartupSec=10min
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target
