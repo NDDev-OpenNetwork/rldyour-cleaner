@@ -7,10 +7,10 @@ pub mod cli;
 pub mod config;
 pub mod homecache;
 pub mod kinds;
+mod os;
 pub mod report;
 pub mod safety;
 pub mod scan;
-pub mod sysinfo;
 
 use clap::Parser;
 use cli::{Cli, Cmd};
@@ -67,7 +67,7 @@ fn cmd_config(init: bool) -> i32 {
 }
 
 fn cmd_status() -> i32 {
-    let p = config::state_dir().join("last-run.json");
+    let p = os::state_dir().join("last-run.json");
     match std::fs::read_to_string(&p) {
         Ok(s) => {
             println!("{s}");
@@ -97,7 +97,7 @@ fn path_allowed(path: &Path, policy: &config::Policy) -> bool {
 
 fn cmd_run(policy: &config::Policy, mode: Mode) -> i32 {
     let started = Instant::now();
-    let use_pct = sysinfo::pressure_level(&policy.roots);
+    let use_pct = os::pressure_level(&policy.roots);
     let pressure = use_pct.is_some_and(|p| p >= policy.pressure_pct);
     let ages = policy.ages(pressure);
 
@@ -136,7 +136,17 @@ fn cmd_run(policy: &config::Policy, mode: Mode) -> i32 {
                             reason: String::new(),
                             age_days: age_days(c),
                         }),
-                        Err(e) => report.push(Entry {
+                        // Windows locks busy trees; that refusal IS the
+                        // process guard there, so it reports as a skip.
+                        Err(clean::ExecuteError::Busy(e)) => report.push(Entry {
+                            path: c.path.display().to_string(),
+                            kind: c.kind.label().into(),
+                            bytes: 0,
+                            action: "skipped",
+                            reason: format!("in-use: {e}"),
+                            age_days: age_days(c),
+                        }),
+                        Err(clean::ExecuteError::Failed(e)) => report.push(Entry {
                             path: c.path.display().to_string(),
                             kind: c.kind.label().into(),
                             bytes: 0,
@@ -180,28 +190,16 @@ fn cmd_run(policy: &config::Policy, mode: Mode) -> i32 {
         if policy.categories.home_caches {
             let mut specs =
                 homecache::specs(ages.cache_entry, ages.dep_stale, &policy.extra_cache_paths);
-            if policy.categories.trash {
-                specs.push(homecache::HomeCandidate {
-                    id: "trash",
-                    path: config::expand_home("~/.local/share/Trash/files"),
-                    strategy: homecache::Strategy::AgeEvict {
-                        days: ages.dep_stale,
-                    },
-                    pressure_only: false,
-                });
+            if policy.categories.trash
+                && let Some(t) = homecache::trash_spec(ages.dep_stale)
+            {
+                specs.push(t);
             }
             if policy.categories.cargo_registry {
-                specs.push(homecache::HomeCandidate {
-                    id: "cargo-registry",
-                    path: config::expand_home("~/.cargo/registry"),
-                    strategy: homecache::Strategy::AgeEvict {
-                        days: ages.cache_entry,
-                    },
-                    pressure_only: false,
-                });
+                specs.push(homecache::cargo_registry_spec(ages.cache_entry));
             }
             for spec in &specs {
-                if !spec.path.is_dir() {
+                if !spec.paths.iter().any(|p| p.is_dir()) {
                     continue;
                 }
                 if spec.pressure_only && !pressure {
@@ -212,7 +210,7 @@ fn cmd_run(policy: &config::Policy, mode: Mode) -> i32 {
                     });
                     continue;
                 }
-                if !path_allowed(&spec.path, policy) {
+                if spec.paths.iter().any(|p| !path_allowed(p, policy)) {
                     cache_results.push(homecache::CacheResult {
                         id: spec.id.into(),
                         freed_bytes: 0,
@@ -239,7 +237,10 @@ fn cmd_run(policy: &config::Policy, mode: Mode) -> i32 {
         // Dry-run: preview() reports what each cache *would* free, not the
         // cache's total size — the two differ by orders of magnitude.
         for spec in &homecache::specs(ages.cache_entry, ages.dep_stale, &policy.extra_cache_paths) {
-            if !spec.path.is_dir() || !path_allowed(&spec.path, policy) {
+            if !spec.paths.iter().any(|p| p.is_dir()) {
+                continue;
+            }
+            if spec.paths.iter().any(|p| !path_allowed(p, policy)) {
                 continue;
             }
             if spec.pressure_only && !pressure {
@@ -258,7 +259,7 @@ fn cmd_run(policy: &config::Policy, mode: Mode) -> i32 {
     // A dry-run is a question, not a run — `status` keeps reporting the last
     // real one.
     if !dry_run {
-        report.save(&config::state_dir());
+        report.save(&os::state_dir());
     }
     report.print_summary();
     for r in &cache_results {

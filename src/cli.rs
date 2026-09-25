@@ -8,8 +8,9 @@ use std::path::PathBuf;
     about = "Reclaim disk space from stale build artifacts and tool caches",
     long_about = "Scans the configured roots for build/dependency artifacts that are \
 provably stale, deletes them behind six safety guards, and evicts aged entries \
-from tool caches under $HOME. Runs unattended from a systemd timer; every \
-decision is logged. `scan` never deletes anything."
+from tool caches under the user's home. Runs unattended from the OS scheduler \
+(systemd timer, launchd, Task Scheduler); every decision is logged. \
+`scan` never deletes anything."
 )]
 pub struct Cli {
     /// Policy file to read (default: ~/.config/rldyour-cleaner/config.toml)
@@ -31,7 +32,7 @@ pub enum Cmd {
         verbose: bool,
     },
     /// Apply the policy: guarded deletion + cache eviction + pending reaper.
-    /// This is what the systemd timer calls.
+    /// This is what the OS scheduler calls.
     Run {
         /// Evaluate everything but delete nothing.
         #[arg(long)]

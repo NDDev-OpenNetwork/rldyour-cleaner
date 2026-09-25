@@ -1,8 +1,10 @@
 # rldyour-cleaner — agent instructions
 
 A janitor for developer machines: deletes provably-stale build artifacts and
-tool caches on a systemd timer, designed so it can never break a running
-build. Single binary crate, not a workspace.
+tool caches on a daily OS-scheduled run, designed so it can never break a
+running build. Single binary crate, not a workspace. Platforms: Linux,
+macOS, Windows — anything OS-specific lives under `src/os/` (one module per
+platform) and `platforms/<os>/` (scheduler + installer assets).
 
 ## Layout
 
@@ -10,14 +12,19 @@ build. Single binary crate, not a workspace.
 |---|---|
 | `src/kinds.rs` | artifact taxonomy: which dir names + sibling markers make a candidate, and which gate decides it |
 | `src/scan.rs` | root walker, age gates, size/mtime measurement, incremental + flutter_build sub-candidates |
-| `src/safety.rs` | the five guards — path shape, cargo lock, /proc liveness, freshness floor — and the held-lock `Prepared` |
-| `src/clean.rs` | rename→remove_dir_all executor + `.rldyour-cleaner-pending` reaper |
-| `src/homecache.rs` | $HOME tool caches: age-eviction or delegation to the tool's own GC |
-| `src/config.rs` | TOML policy (`~/.config/rldyour-cleaner/config.toml`), defaults = balanced profile |
-| `src/sysinfo.rs` | statvfs pressure probe, PATH lookup |
-| `src/report.rs` | JSON report persisted to `$XDG_STATE_HOME/rldyour-cleaner/last-run.json` |
-| `systemd/` | user units: oneshot service (Nice=19, idle IO) + daily timer |
-| `tmpfiles.d/tmp.conf` | masks the stock file → /tmp aged at 7d instead of 30d |
+| `src/safety.rs` | the guards — path shape, cargo lock, process liveness, freshness floor — and the held-lock `Prepared` |
+| `src/clean.rs` | rename→remove_dir_all executor + `.rldyour-cleaner-pending` reaper; `ExecuteError::Busy` is the Windows "in use" verdict |
+| `src/homecache.rs` | tool caches: age-eviction or delegation to the tool's own GC; specs list every plausible per-OS path |
+| `src/config.rs` | TOML policy under `os::config_dir()`, defaults = balanced profile |
+| `src/os/` | platform layer — shared helpers in `mod.rs`, liveness per OS |
+| `src/os/linux.rs` | `/proc` probe (exe/cwd/fd/maps), per-call |
+| `src/os/unix_lsof.rs` | `lsof` snapshot probe — macOS + BSDs |
+| `src/os/windows.rs` | no enumeration; Windows file locking + `Busy` mapping IS the guard |
+| `src/report.rs` | JSON report persisted to `os::state_dir()/last-run.json` |
+| `platforms/linux/` | systemd units + tmpfiles.d override (/tmp 30d→7d) |
+| `platforms/macos/` | launchd plist, `@HOME@` templated |
+| `install.sh` / `uninstall.sh` | Linux + macOS dispatcher |
+| `install.ps1` / `uninstall.ps1` | Windows — Task Scheduler |
 
 ## Invariants (do not break these)
 
@@ -25,6 +32,10 @@ build. Single binary crate, not a workspace.
   it is derived output (own-mtime gate) or a dependency tree (project-
   activity gate + project-root proc scope). Getting this backwards is the one
   way this tool can hurt someone.
+- **`pids_using` is fail-closed.** `None` (platform cannot enumerate) means
+  "in use" → skip. Never turn an undecidable probe into an empty list.
+- **Windows' guard is its locking semantics**: a held tree refuses rename —
+  `clean::execute` maps that to `Busy` → reported as a skip, never a failure.
 - **Locks are held through deletion.** `Prepared._hold_lock` must outlive the
   rename+remove; dropping it early reopens the race it exists to close.
 - **Never create files inside a candidate as part of a guard** — it bumps the
@@ -43,15 +54,20 @@ build. Single binary crate, not a workspace.
   substrings are absolute.
 - Deps stay minimal and justified in `Cargo.toml`. English everywhere.
 - Public repo: no host/user/estate facts in code, config or docs.
+- Temp dirs are the OS's job — tmpfiles.d on Linux, built-in cleaners on
+  macOS/Windows. The tool never rm's `/tmp` itself.
 
 ## Verify
 
 ```sh
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets -- -D warnings          # linux
+cargo check --all-targets --target aarch64-apple-darwin
+cargo check --all-targets --target x86_64-pc-windows-msvc
 cargo test
 shellcheck install.sh uninstall.sh
 ```
 
-CI runs fmt + clippy + tests on ubuntu-latest and macos-latest (the proc
-guard is Linux-only by `cfg`; everything else is portable).
+CI runs fmt + clippy + shellcheck + plist validation on Linux, tests on
+ubuntu/macos/windows, an MSRV (1.88) check, and tag pushes (`v*`) release
+prebuilt binaries for all three platforms.

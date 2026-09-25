@@ -24,29 +24,54 @@ fn pending_name(c: &Candidate) -> String {
     )
 }
 
+/// Why `execute` did not free anything. `Busy` is not an error — it is the
+/// OS's own liveness verdict: on Windows a tree that a process sits in,
+/// executes from, or holds open simply cannot be renamed (mandatory
+/// locking), which is exactly the process guard on that platform.
+pub enum ExecuteError {
+    /// Refused because the tree is in use — report as a skip, not a failure.
+    Busy(String),
+    /// A real failure worth reporting as such.
+    Failed(String),
+}
+
+/// Is this rename refusal the OS telling us the tree is held open?
+/// Windows: ERROR_ACCESS_DENIED (5), ERROR_SHARING_VIOLATION (32),
+/// ERROR_LOCK_VIOLATION (33). Unix rename has no such semantics — every
+/// failure there is a genuine error.
+fn is_busy_error(e: &std::io::Error) -> bool {
+    cfg!(windows) && matches!(e.raw_os_error(), Some(5) | Some(32) | Some(33))
+}
+
 /// Rename the candidate aside and delete it. Takes the `Prepared` — not just
 /// the candidate — so cargo's lock file stays held across the rename+remove;
 /// that is the whole point of the interlock. Returns freed bytes (the size
 /// measured at scan time) or a message describing why nothing was removed.
-pub fn execute(p: &Prepared<'_>) -> Result<u64, String> {
+pub fn execute(p: &Prepared<'_>) -> Result<u64, ExecuteError> {
     let c = p.candidate;
     if !c.path.exists() {
-        return Err("already gone".into());
+        return Err(ExecuteError::Failed("already gone".into()));
     }
     let pending = c
         .path
         .parent()
-        .ok_or_else(|| "no parent dir".to_string())?
+        .ok_or_else(|| ExecuteError::Failed("no parent dir".to_string()))?
         .join(pending_name(c));
-    fs::rename(&c.path, &pending).map_err(|e| format!("rename failed: {e}"))?;
+    fs::rename(&c.path, &pending).map_err(|e| {
+        if is_busy_error(&e) {
+            ExecuteError::Busy(format!("the OS refuses the rename: {e}"))
+        } else {
+            ExecuteError::Failed(format!("rename failed: {e}"))
+        }
+    })?;
     match fs::remove_dir_all(&pending) {
         Ok(()) => Ok(c.size_bytes),
         Err(e) => {
             // Left behind: a `.rldyour-cleaner-pending-*` dir the next run's
             // reaper will finish off.
-            Err(format!(
+            Err(ExecuteError::Failed(format!(
                 "partially removed ({e}); pending dir left for next run"
-            ))
+            )))
         }
     }
 }

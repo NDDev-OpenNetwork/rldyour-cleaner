@@ -12,8 +12,7 @@
 //! older). Browsers' *live* profiles are never in scope — only the standalone
 //! artifact caches listed below.
 
-use crate::config::expand_home;
-use crate::sysinfo::on_path;
+use crate::os;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,7 +20,10 @@ use std::time::{Duration, SystemTime};
 
 pub struct HomeCandidate {
     pub id: &'static str,
-    pub path: PathBuf,
+    /// Every plausible location for this cache across supported OSes;
+    /// paths that do not exist are skipped silently. Most specs carry one
+    /// entry — several is normal when a tool picks different roots per OS.
+    pub paths: Vec<PathBuf>,
     pub strategy: Strategy,
     /// Only process under disk pressure — for caches whose own GC is
     /// scorched-earth (`go clean -modcache` wipes everything, forcing a full
@@ -41,23 +43,37 @@ pub enum Strategy {
     KeepCurrent { keep_days: u64 },
 }
 
-fn hc(id: &'static str, path: PathBuf, strategy: Strategy) -> HomeCandidate {
+fn hc(id: &'static str, paths: Vec<PathBuf>, strategy: Strategy) -> HomeCandidate {
+    // One directory can be reachable by several conventions (on Linux
+    // `data_local_dir()` *is* `~/.local/share`) — dedupe by canonical path
+    // so it is processed and reported once.
+    let mut seen = std::collections::HashSet::new();
+    let paths = paths
+        .into_iter()
+        .filter(|p| seen.insert(p.canonicalize().unwrap_or_else(|_| p.clone())))
+        .collect();
     HomeCandidate {
         id,
-        path,
+        paths,
         strategy,
         pressure_only: false,
     }
 }
 
-/// The fixed cache set. Every path exists or is skipped silently — machines
-/// only ever carry a subset of these tools.
+/// The fixed cache set. Each spec lists every plausible location across
+/// OSes — e.g. uv's cache is `{cache}/uv` on unix but `{cache}/uv/cache` on
+/// Windows, pnpm's store sits in `~/Library/pnpm` on macOS — and whichever
+/// do not exist are skipped. `cache`/`data`/`home` resolve through `os::`
+/// to the platform convention.
 pub fn specs(cache_entry_days: u64, dep_stale_days: u64, extra: &[PathBuf]) -> Vec<HomeCandidate> {
     let d = cache_entry_days;
+    let cache = os::cache_dir();
+    let data = os::data_local_dir();
+    let home = os::home_dir();
     let mut v = vec![
         hc(
             "uv",
-            expand_home("~/.cache/uv"),
+            vec![cache.join("uv"), cache.join("uv/cache")],
             Strategy::Command {
                 argv: &["uv", "cache", "prune"],
                 fallback_days: d,
@@ -69,7 +85,7 @@ pub fn specs(cache_entry_days: u64, dep_stale_days: u64, extra: &[PathBuf]) -> V
             // dirs, but it wipes *everything* — the next build re-downloads
             // all modules. Pressure-only, and no age-evict fallback: partial
             // rm on read-only trees fails halfway and leaves a mess.
-            path: expand_home("~/go/pkg/mod"),
+            paths: vec![home.join("go/pkg/mod")],
             strategy: Strategy::Command {
                 argv: &["go", "clean", "-modcache"],
                 fallback_days: 0,
@@ -78,89 +94,113 @@ pub fn specs(cache_entry_days: u64, dep_stale_days: u64, extra: &[PathBuf]) -> V
         },
         hc(
             "go-build",
-            expand_home("~/.cache/go-build"),
+            vec![cache.join("go-build")],
             Strategy::AgeEvict { days: d },
         ),
         hc(
             "bun",
-            expand_home("~/.bun/install/cache"),
+            vec![home.join(".bun/install/cache")],
             Strategy::AgeEvict { days: d },
         ),
         hc(
             "npm",
-            expand_home("~/.npm/_cacache"),
+            vec![home.join(".npm/_cacache")],
             Strategy::AgeEvict { days: d },
         ),
         hc(
             "pub",
-            expand_home("~/.pub-cache"),
+            vec![home.join(".pub-cache"), cache.join("Pub/Cache")],
             Strategy::AgeEvict { days: d },
         ),
         hc(
             "gradle",
-            expand_home("~/.gradle/caches"),
+            vec![home.join(".gradle/caches")],
             Strategy::AgeEvict { days: d },
         ),
         hc(
             "pip",
-            expand_home("~/.cache/pip"),
+            vec![cache.join("pip"), cache.join("pip/cache")],
             Strategy::AgeEvict { days: d },
         ),
         hc(
             "pre-commit",
-            expand_home("~/.cache/pre-commit"),
+            vec![cache.join("pre-commit")],
             Strategy::AgeEvict { days: d },
         ),
         hc(
             "playwright",
-            expand_home("~/.cache/ms-playwright"),
+            vec![cache.join("ms-playwright")],
             Strategy::AgeEvict { days: d },
         ),
         hc(
             "puppeteer",
-            expand_home("~/.cache/puppeteer"),
+            vec![cache.join("puppeteer")],
             Strategy::AgeEvict { days: d },
         ),
         hc(
             "codex-runtimes",
-            expand_home("~/.cache/codex-runtimes"),
+            vec![cache.join("codex-runtimes")],
             Strategy::AgeEvict { days: d },
         ),
         hc(
             "pnpm-store",
-            expand_home("~/.local/share/pnpm/store"),
+            vec![
+                data.join("pnpm/store"),
+                home.join("Library/pnpm/store"), // macOS pnpm convention
+            ],
             Strategy::AgeEvict { days: d },
         ),
         hc(
             "devin-versions",
-            expand_home("~/.local/share/devin/cli/_versions"),
+            vec![
+                data.join("devin/cli/_versions"),
+                home.join(".local/share/devin/cli/_versions"), // pre-XDG installs
+            ],
             Strategy::KeepCurrent {
                 keep_days: dep_stale_days,
             },
         ),
     ];
     for p in extra {
-        v.push(hc("extra-cache", p.clone(), Strategy::AgeEvict { days: d }));
+        v.push(hc(
+            "extra-cache",
+            vec![p.clone()],
+            Strategy::AgeEvict { days: d },
+        ));
     }
     v
+}
+
+/// Freedesktop Trash — opt-in user data, unix only. `~/.Trash` on macOS and
+/// the Windows Recycle Bin have their own OS conventions and stay out of
+/// scope entirely (`None` there — the policy flag is then a no-op).
+pub fn trash_spec(days: u64) -> Option<HomeCandidate> {
+    if cfg!(unix) {
+        Some(HomeCandidate {
+            id: "trash",
+            paths: vec![os::data_local_dir().join("Trash/files")],
+            strategy: Strategy::AgeEvict { days },
+            pressure_only: false,
+        })
+    } else {
+        None
+    }
+}
+
+/// `~/.cargo/registry` — opt-in; cargo ≥1.88 owns this itself.
+pub fn cargo_registry_spec(days: u64) -> HomeCandidate {
+    HomeCandidate {
+        id: "cargo-registry",
+        paths: vec![os::home_dir().join(".cargo/registry")],
+        strategy: Strategy::AgeEvict { days },
+        pressure_only: false,
+    }
 }
 
 pub struct CacheResult {
     pub id: String,
     pub freed_bytes: u64,
     pub detail: String,
-}
-
-fn file_bytes(md: &fs::Metadata) -> u64 {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        md.blocks() * 512
-    }
-    #[cfg(not(unix))]
-    {
-        md.len()
-    }
 }
 
 /// What `age_evict` would free — same walk, no mutation (dry-run preview).
@@ -181,7 +221,7 @@ pub fn age_evict_dry(dir: &Path, days: u64) -> (u64, usize) {
         };
         if (md.file_type().is_symlink() || md.is_file()) && md.modified().is_ok_and(|m| m < cutoff)
         {
-            freed += file_bytes(&md);
+            freed += os::file_size(&md);
             count += 1;
         }
     }
@@ -209,7 +249,7 @@ pub fn age_evict(dir: &Path, days: u64) -> (u64, usize) {
         if md.file_type().is_symlink() || md.is_file() {
             let old = md.modified().is_ok_and(|m| m < cutoff);
             if old && fs::remove_file(e.path()).is_ok() {
-                freed += file_bytes(&md);
+                freed += os::file_size(&md);
                 removed += 1;
             }
         } else if md.is_dir() {
@@ -312,76 +352,59 @@ fn clear_download(dir: &Path) -> u64 {
 
 /// The directory is busy when any live process holds a file, map, exe or cwd
 /// inside it — e.g. a gradle daemon with jars mapped, or `pnpm install`
-/// mid-hardlink. Skipping beats racing.
+/// mid-hardlink. An *undecidable* probe (`None`) counts as busy too: a
+/// deletion tool fails closed. Skipping beats racing.
 fn in_use(path: &Path) -> Option<String> {
-    let users = crate::safety::pids_using(path);
-    (!users.is_empty()).then(|| {
-        format!(
+    match crate::safety::pids_using(path) {
+        None => Some("cannot enumerate processes on this run".into()),
+        Some(users) if users.is_empty() => None,
+        Some(users) => Some(format!(
             "in use by pid(s) {}",
             users
                 .iter()
                 .map(u32::to_string)
                 .collect::<Vec<_>>()
                 .join(",")
-        )
-    })
+        )),
+    }
 }
 
-/// What `process` would do — same decisions, no mutation (dry-run preview).
-pub fn preview(c: &HomeCandidate) -> CacheResult {
-    let base = CacheResult {
-        id: c.id.to_string(),
-        freed_bytes: 0,
-        detail: String::new(),
-    };
-    if !c.path.is_dir() {
-        return base;
-    }
+/// What `process` would do at one location — same decisions, no mutation.
+fn preview_path(c: &HomeCandidate, path: &Path) -> (u64, String) {
     // KeepCurrent checks liveness per doomed version dir, not on the root —
     // `_versions` is permanently "in use" while any devin process runs.
     if !matches!(c.strategy, Strategy::KeepCurrent { .. })
-        && let Some(detail) = in_use(&c.path)
+        && let Some(detail) = in_use(path)
     {
-        return CacheResult { detail, ..base };
+        return (0, detail);
     }
     match &c.strategy {
         Strategy::AgeEvict { days } => {
-            let (freed, n) = age_evict_dry(&c.path, *days);
-            CacheResult {
-                freed_bytes: freed,
-                detail: format!("would evict {n} entries"),
-                ..base
-            }
+            let (freed, n) = age_evict_dry(path, *days);
+            (freed, format!("would evict {n} entries"))
         }
         Strategy::Command {
             argv,
             fallback_days,
         } => {
-            if on_path(argv[0]) {
-                CacheResult {
-                    detail: format!("would run `{}`", argv.join(" ")),
-                    ..base
-                }
+            if os::on_path(argv[0]) {
+                (0, format!("would run `{}`", argv.join(" ")))
             } else if *fallback_days > 0 {
-                let (freed, n) = age_evict_dry(&c.path, *fallback_days);
-                CacheResult {
-                    freed_bytes: freed,
-                    detail: format!(
+                let (freed, n) = age_evict_dry(path, *fallback_days);
+                (
+                    freed,
+                    format!(
                         "would evict {n} entries (no {tool} on PATH)",
                         tool = argv[0]
                     ),
-                    ..base
-                }
+                )
             } else {
-                CacheResult {
-                    detail: format!("{} not on PATH; skipped", argv[0]),
-                    ..base
-                }
+                (0, format!("{} not on PATH; skipped", argv[0]))
             }
         }
         Strategy::KeepCurrent { keep_days } => {
-            let doomed = keep_current_list(&c.path, *keep_days);
-            let (mut freed, _) = crate::scan::measure(&c.path.join("_download"));
+            let doomed = keep_current_list(path, *keep_days);
+            let (mut freed, _) = crate::scan::measure(&path.join("_download"));
             let mut held = 0usize;
             for p in &doomed {
                 if in_use(p).is_some() {
@@ -395,78 +418,85 @@ pub fn preview(c: &HomeCandidate) -> CacheResult {
             if held > 0 {
                 detail.push_str(&format!("; {held} held by running processes"));
             }
-            CacheResult {
-                freed_bytes: freed,
-                detail,
-                ..base
-            }
+            (freed, detail)
         }
     }
 }
 
-pub fn process(c: &HomeCandidate) -> CacheResult {
-    let base = CacheResult {
-        id: c.id.to_string(),
-        freed_bytes: 0,
-        detail: String::new(),
-    };
-    if !c.path.is_dir() {
-        return base;
+/// What `process` would do — same decisions, no mutation (dry-run preview).
+pub fn preview(c: &HomeCandidate) -> CacheResult {
+    let mut freed_bytes = 0u64;
+    let mut details = Vec::new();
+    for p in c.paths.iter().filter(|p| p.is_dir()) {
+        let (freed, detail) = preview_path(c, p);
+        freed_bytes += freed;
+        if !detail.is_empty() {
+            details.push(detail);
+        }
     }
-    // KeepCurrent checks liveness per doomed version dir, not on the root —
-    // `_versions` is permanently "in use" while any devin process runs.
+    CacheResult {
+        id: c.id.to_string(),
+        freed_bytes,
+        detail: details.join("; "),
+    }
+}
+
+/// Process one existing location of the spec.
+fn process_path(c: &HomeCandidate, path: &Path) -> (u64, String) {
     if !matches!(c.strategy, Strategy::KeepCurrent { .. })
-        && let Some(detail) = in_use(&c.path)
+        && let Some(detail) = in_use(path)
     {
-        return CacheResult { detail, ..base };
+        return (0, detail);
     }
     match &c.strategy {
         Strategy::AgeEvict { days } => {
-            let (freed, n) = age_evict(&c.path, *days);
-            CacheResult {
-                freed_bytes: freed,
-                detail: format!("evicted {n} entries"),
-                ..base
-            }
+            let (freed, n) = age_evict(path, *days);
+            (freed, format!("evicted {n} entries"))
         }
         Strategy::Command {
             argv,
             fallback_days,
         } => {
-            if on_path(argv[0]) {
+            if os::on_path(argv[0]) {
                 match run_command(argv) {
-                    Ok(detail) => CacheResult { detail, ..base },
-                    Err(e) => CacheResult {
-                        detail: format!("tool failed: {e}"),
-                        ..base
-                    },
+                    Ok(detail) => (0, detail),
+                    Err(e) => (0, format!("tool failed: {e}")),
                 }
             } else if *fallback_days > 0 {
-                let (freed, n) = age_evict(&c.path, *fallback_days);
-                CacheResult {
-                    freed_bytes: freed,
-                    detail: format!("evicted {n} entries (no {tool} on PATH)", tool = argv[0]),
-                    ..base
-                }
+                let (freed, n) = age_evict(path, *fallback_days);
+                (
+                    freed,
+                    format!("evicted {n} entries (no {tool} on PATH)", tool = argv[0]),
+                )
             } else {
-                CacheResult {
-                    detail: format!("{} not on PATH; skipped", argv[0]),
-                    ..base
-                }
+                (0, format!("{} not on PATH; skipped", argv[0]))
             }
         }
         Strategy::KeepCurrent { keep_days } => {
-            let staged = clear_download(&c.path);
-            let (freed, n, notes) = keep_current(&c.path, *keep_days);
+            let staged = clear_download(path);
+            let (freed, n, notes) = keep_current(path, *keep_days);
             let mut detail = format!("removed {n} old versions");
             if !notes.is_empty() {
                 detail.push_str(&format!("; {}", notes.join("; ")));
             }
-            CacheResult {
-                freed_bytes: freed + staged,
-                detail,
-                ..base
-            }
+            (freed + staged, detail)
         }
+    }
+}
+
+pub fn process(c: &HomeCandidate) -> CacheResult {
+    let mut freed_bytes = 0u64;
+    let mut details = Vec::new();
+    for p in c.paths.iter().filter(|p| p.is_dir()) {
+        let (freed, detail) = process_path(c, p);
+        freed_bytes += freed;
+        if !detail.is_empty() {
+            details.push(detail);
+        }
+    }
+    CacheResult {
+        id: c.id.to_string(),
+        freed_bytes,
+        detail: details.join("; "),
     }
 }

@@ -1,5 +1,6 @@
-//! User-editable policy. Parsed from `~/.config/rldyour-cleaner/config.toml`;
-//! every field has a default so a missing file means "balanced defaults".
+//! User-editable policy. Parsed from `config.toml` under the platform config
+//! dir (`os::config_dir`); every field has a default so a missing file means
+//! "balanced defaults".
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -186,34 +187,17 @@ impl Ages {
     }
 }
 
-/// Expand a leading `~` (or `~/`) against `$HOME`. Anything else passes
-/// through unchanged; an unset HOME leaves `~` literal, which will simply not
-/// match anything on disk.
+/// Expand a leading `~` against the platform home dir — see `os::expand_home`.
+/// Kept re-exported here because every config string flows through it.
 pub fn expand_home(raw: &str) -> PathBuf {
-    if let Some(rest) = raw.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
-    } else if raw == "~"
-        && let Ok(home) = std::env::var("HOME")
-    {
-        return PathBuf::from(home);
-    }
-    PathBuf::from(raw)
+    crate::os::expand_home(raw)
 }
 
+/// `config.toml` under the per-platform config root
+/// (`~/.config/rldyour-cleaner`, `~/Library/Application Support/…`,
+/// `%LOCALAPPDATA%\…`).
 pub fn config_path() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(dir).join("rldyour-cleaner/config.toml");
-    }
-    expand_home("~/.config/rldyour-cleaner/config.toml")
-}
-
-pub fn state_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_STATE_HOME") {
-        return PathBuf::from(dir).join("rldyour-cleaner");
-    }
-    expand_home("~/.local/state/rldyour-cleaner")
+    crate::os::config_dir().join("config.toml")
 }
 
 /// Load the policy file, or fall back to defaults when it is absent.

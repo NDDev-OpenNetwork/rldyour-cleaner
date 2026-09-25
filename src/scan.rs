@@ -63,18 +63,6 @@ const ACTIVITY_SKIP: &[&str] = &[
     ".serena",
 ];
 
-fn file_used_bytes(md: &fs::Metadata) -> u64 {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let blocks = md.blocks();
-        if blocks > 0 {
-            return blocks * 512;
-        }
-    }
-    md.len()
-}
-
 /// (allocated bytes, newest mtime) under `dir`. Symlinks are counted, never
 /// followed.
 pub fn measure(dir: &Path) -> (u64, Option<SystemTime>) {
@@ -84,7 +72,7 @@ pub fn measure(dir: &Path) -> (u64, Option<SystemTime>) {
         let Ok(md) = fs::symlink_metadata(e.path()) else {
             continue;
         };
-        size = size.saturating_add(file_used_bytes(&md));
+        size = size.saturating_add(crate::os::file_size(&md));
         if let Ok(m) = md.modified()
             && newest.is_none_or(|n| m > n)
         {
@@ -233,7 +221,7 @@ pub fn scan(policy: &Policy, ages: Ages) -> ScanOutcome {
         if !root.is_dir() {
             continue;
         }
-        let root_dev = device_of(root);
+        let root_dev = crate::os::device_id(root);
         let mut warm_targets: Vec<PathBuf> = Vec::new();
 
         // Manual iteration (cargo-sweep style): `skip_current_dir` yields a
@@ -246,7 +234,8 @@ pub fn scan(policy: &Policy, ages: Ages) -> ScanOutcome {
                 continue;
             }
             let name = entry.file_name().to_str().unwrap_or("");
-            if name.starts_with(crate::clean::PENDING_PREFIX) || device_of(entry.path()) != root_dev
+            if name.starts_with(crate::clean::PENDING_PREFIX)
+                || crate::os::device_id(entry.path()) != root_dev
             {
                 iter.skip_current_dir();
                 continue;
@@ -320,17 +309,4 @@ pub fn scan(policy: &Policy, ages: Ages) -> ScanOutcome {
         }
     }
     outcome
-}
-
-fn device_of(path: &Path) -> u64 {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        fs::metadata(path).map(|m| m.dev()).unwrap_or(u64::MAX)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        0
-    }
 }

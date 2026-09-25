@@ -4,8 +4,14 @@ A janitor for developer machines: it removes build artifacts and tool caches
 that are **provably stale**, on a schedule, without ever breaking a build or
 app that is currently running.
 
-Not a daemon — a oneshot tool plus a `systemd --user` timer. Cleanup is
+Not a daemon — a oneshot tool plus the OS's own scheduler. Cleanup is
 periodic batch work; a sleeping process would only be one more thing to fail.
+
+| OS | Scheduler | Temp dirs | Process liveness probe |
+|---|---|---|---|
+| Linux | `systemd --user` timer (daily) | `tmpfiles.d` override → `/tmp` aged at 7d | `/proc`: exe/cwd/fd/maps per candidate |
+| macOS | launchd agent (daily 03:00) | built-in periodic/`/tmp` cleaner — untouched | `lsof` snapshot once per run |
+| Windows | Task Scheduler (daily 03:00) | Storage Sense is the OS mechanism — untouched | mandatory file locking is the guard (rename/remove of a held tree fails → safe skip) |
 
 ## Why it can't hurt your builds
 
@@ -20,16 +26,18 @@ Every candidate must pass **all** of these before removal:
    cargo-sweep do), never on git history: uncommitted work still counts.
 2. **Freshness floor** — anything written within `guard_fresh_minutes`
    (default 15) is off-limits, re-checked right before removal.
-3. **Process guard** — on Linux no process may have the directory (for dep
-   trees: the whole project) as its `cwd`, `exe`, an open fd, or a memory
-   mapping (a gradle daemon's jars only show up in `maps`).
+3. **Process guard** — no live process may hold the directory (for dep
+   trees: the whole project). The probe is per-OS (`/proc`, `lsof`, or
+   Windows' own locking semantics); if the platform cannot answer at all,
+   the candidate is skipped — this tool fails closed, never open.
 4. **Cargo lock** — for `target/` dirs, `.cargo-lock` must be acquirable
    exclusively — the same file cargo holds during builds. The lock is kept
    held *while* the tree is deleted, so a `cargo build` starting in that
    window simply waits and then creates a fresh `target/`.
 5. **Path guard** — real directories only, never symlinks, never mounts
-   (`st_dev` of the scan root), never paths matching `protect`, and nothing
-   outside the configured `roots`.
+   (`st_dev` of the scan root on unix; reparse points count as symlinks on
+   Windows), never paths matching `protect`, and nothing outside the
+   configured `roots`.
 6. **Gitignore gate** — generic names (`build/`, `dist/`, `out/`) must
    additionally be ignored by git (`git check-ignore`); a tracked `build/`
    holding source files is not an artifact, however stale it looks.
@@ -52,28 +60,28 @@ Disk-pressure mode: when any scan root's filesystem reaches `pressure_pct`
 | `dist/`, `out/` | sibling `package.json` **and** git-ignored | artifact mtime |
 | `build/` | sibling `pubspec.yaml` / `*.gradle*` / `package.json` **and** git-ignored | artifact mtime |
 | `.dart_tool` | sibling `pubspec.yaml` | project activity; `flutter_build` inside live ones gets its own gate |
-| `.gradle`, `android/app/build` | gradle markers | artifact mtime |
+| `.gradle` | gradle markers | artifact mtime |
 | `.venv`, `venv`, `.tox`, `.nox` | python markers | project activity |
 | `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.hypothesis` | anywhere | artifact mtime |
-| tool caches | `~/.cache/{uv,go-build,pip,pre-commit,ms-playwright,puppeteer,codex-runtimes}`, `~/.bun/install/cache`, `~/.npm/_cacache`, `~/.pub-cache`, `~/.gradle/caches`, pnpm store | per-entry age; skipped while any process uses the cache; `uv` delegates to its own GC |
-| `~/go/pkg/mod` | go's read-only module cache | `go clean -modcache`, **pressure runs only** — it wipes everything |
-| devin CLI versions | `~/.local/share/devin/cli/_versions` | keep `current`, drop old |
+| tool caches | uv, go-build, bun, npm `_cacache`, pub, gradle, pip, pre-commit, playwright, puppeteer, codex-runtimes, pnpm store — at each OS's conventional location | per-entry age; skipped while any process uses the cache; `uv` delegates to its own GC |
+| `go/pkg/mod` | go's read-only module cache | `go clean -modcache`, **pressure runs only** — it wipes everything |
+| devin CLI versions | `_versions` under the devin data dir | keep `current`, drop old |
 
 Explicitly **not** touched: `~/.cargo/registry` (cargo ≥ 1.88 GCs it itself),
-`~/.android/avd`, toolchains under `~/.local/share/rldyour`, `~/.git` contents,
-Trash (opt-in), and anything matching `protect`. `/tmp` is handled by the OS:
-`install.sh` drops a `tmpfiles.d` override aging entries at 7 days (distro
-default is 30).
+`~/.android/avd`, toolchains, `.git` contents, Trash/Recycle Bin (opt-in and
+unix-only), and anything matching `protect`. Temp directories are delegated
+to each OS's own mechanism rather than reinvented.
 
 ## Install
 
 ```sh
-./install.sh      # build → ~/.local/bin, units → systemd --user, enable timer
+./install.sh       # Linux: systemd --user timer · macOS: launchd agent
+.\install.ps1      # Windows: Task Scheduler task
 ```
 
-Everything lands under `$HOME`; the only root step is the optional
-`/etc/tmpfiles.d/tmp.conf` drop-in (skipped with a printed recipe if sudo is
-unavailable). `uninstall.sh` reverses it and restores the stock /tmp policy.
+Everything lands under the user's home/profile; the only privileged step is
+Linux's optional `/etc/tmpfiles.d/tmp.conf` drop-in (skipped with a printed
+recipe if sudo is unavailable). `uninstall.sh` / `uninstall.ps1` reverse it.
 
 ## Commands
 
@@ -82,15 +90,17 @@ rldyour-cleaner scan            # table of stale candidates — never deletes
 rldyour-cleaner scan -v         # include skipped entries with reasons
 rldyour-cleaner scan --json     # machine-readable
 rldyour-cleaner run --dry-run   # full evaluation, no mutation
-rldyour-cleaner run             # what the timer calls
+rldyour-cleaner run             # what the scheduler calls
 rldyour-cleaner status          # last run's JSON report
 rldyour-cleaner config          # effective policy; --init writes the file
 ```
 
 ## Policy
 
-`~/.config/rldyour-cleaner/config.toml` — every key optional; the shipped
-default file documents them all. Highlights:
+`config.toml` under the platform config dir — Linux
+`~/.config/rldyour-cleaner/`, macOS `~/Library/Application Support/`,
+Windows `%LOCALAPPDATA%\` — every key optional; the shipped default file
+documents them all. Highlights:
 
 ```toml
 roots = ["~/Developer"]
@@ -104,6 +114,28 @@ protect = []             # path substrings never deleted
 extra_cache_paths = []   # extra dirs evicted like tool caches
 ```
 
+## Repository layout
+
+```
+src/
+  kinds.rs     artifact taxonomy: names + sibling markers → kind
+  scan.rs      root walker, age gates, measurement, sub-candidates
+  safety.rs    the guards + the held-lock `Prepared`
+  clean.rs     rename→remove executor + pending-dir reaper
+  homecache.rs tool caches: age-evict or delegate to the tool's own GC
+  config.rs    TOML policy, balanced defaults
+  report.rs    JSON run report for `status`
+  os/          everything OS-specific, one file per platform:
+    mod.rs       dirs/paths, PATH lookup, fs fill, device & size helpers
+    linux.rs     /proc liveness probe
+    unix_lsof.rs lsof liveness probe (macOS, BSDs)
+    windows.rs   locking-semantics guard (probe = the delete itself)
+platforms/
+  linux/       systemd units + tmpfiles.d override
+  macos/       launchd plist (@HOME@ substituted at install)
+  windows/     (scheduled task is created by install.ps1)
+```
+
 ## Verify / develop
 
 ```sh
@@ -111,5 +143,9 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 shellcheck install.sh uninstall.sh
-systemd-analyze --user verify systemd/*.service systemd/*.timer  # if systemd present
+systemd-analyze --user verify platforms/linux/systemd/*  # on Linux
 ```
+
+CI runs fmt + clippy + shellcheck on Linux and tests on
+ubuntu/macos/windows; a `v*` tag builds and publishes release binaries for
+all three.

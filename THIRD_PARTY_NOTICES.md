@@ -9,8 +9,7 @@ This crate depends on the following Rust libraries:
 | serde_json | MIT OR Apache-2.0 | report JSON |
 | toml | MIT OR Apache-2.0 | policy file format |
 | walkdir | Unlicense OR MIT | directory traversal |
-| fs2 | MIT OR Apache-2.0 | probing cargo's `.cargo-lock` |
-| libc | MIT OR Apache-2.0 | `statvfs` disk-pressure probe |
+| fs2 | MIT OR Apache-2.0 | cargo's `.cargo-lock` probing + cross-platform disk-space stats |
 
 Dev-only:
 

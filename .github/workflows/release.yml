@@ -1,0 +1,62 @@
+name: Release
+
+# Tag push (v*) publishes binaries for the three supported platforms.
+# gh (preinstalled on all runners) does the release — no third-party actions.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: ${{ matrix.name }}
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: linux-x86_64
+            bin: rldyour-cleaner
+            ext: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: macos-aarch64
+            bin: rldyour-cleaner
+            ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-x86_64
+            bin: rldyour-cleaner.exe
+            ext: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "${{ matrix.ext }}" = "zip" ]; then
+            7z a "dist/rldyour-cleaner-${{ matrix.name }}.zip" \
+              "target/${{ matrix.target }}/release/${{ matrix.bin }}"
+          else
+            tar -czf "dist/rldyour-cleaner-${{ matrix.name }}.tar.gz" \
+              -C "target/${{ matrix.target }}/release" "${{ matrix.bin }}"
+          fi
+      - name: Upload asset
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" "dist/*" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

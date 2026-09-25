@@ -1,5 +1,5 @@
-//! Run report — printed to stdout (journald picks it up under systemd) and
-//! persisted to `$XDG_STATE_HOME/rldyour-cleaner/last-run.json` for `status`.
+//! Run report — printed to stdout (the scheduler's log picks it up) and
+//! persisted to `os::state_dir()/last-run.json` for `status`.
 
 use serde::Serialize;
 use std::path::Path;

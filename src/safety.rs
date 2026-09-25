@@ -119,68 +119,13 @@ fn proc_scope(c: &Candidate) -> &Path {
     &c.path
 }
 
-/// PIDs whose exe, cwd, open fd, or memory map lands inside `dir`. Linux
-/// `/proc` only; on other platforms the proc guard is a no-op and the
-/// remaining guards (freshness, locks) carry the weight — documented in the
-/// README. `dir` is canonicalized here so callers cannot forget.
-pub(crate) fn pids_using(dir: &Path) -> Vec<u32> {
+/// PIDs whose exe, cwd, open fd, or memory map lands inside `dir`.
+/// Delegates to the platform probe in `os/`; `None` means the platform
+/// cannot enumerate (never silently "nobody uses it"). `dir` is
+/// canonicalized here so callers cannot forget.
+pub(crate) fn pids_using(dir: &Path) -> Option<Vec<u32>> {
     let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-    proc_using_impl(&dir)
-}
-
-#[cfg(target_os = "linux")]
-fn proc_using_impl(dir: &Path) -> Vec<u32> {
-    let own = std::process::id();
-    let needle = dir.to_string_lossy().into_owned();
-    let mut hits = Vec::new();
-    let Ok(proc_dir) = fs::read_dir("/proc") else {
-        return hits;
-    };
-    for entry in proc_dir.flatten() {
-        let name = entry.file_name();
-        let Some(s) = name.to_str() else { continue };
-        if !s.bytes().all(|b| b.is_ascii_digit()) {
-            continue;
-        }
-        let Ok(pid) = s.parse::<u32>() else { continue };
-        if pid == own {
-            continue;
-        }
-        let base = entry.path();
-        let mut hit = false;
-        for link in ["exe", "cwd"] {
-            if fs::read_link(base.join(link)).is_ok_and(|t| t.starts_with(dir)) {
-                hit = true;
-                break;
-            }
-        }
-        if !hit && let Ok(fds) = fs::read_dir(base.join("fd")) {
-            for fd in fds.flatten().take(8192) {
-                if fs::read_link(fd.path()).is_ok_and(|t| t.starts_with(dir)) {
-                    hit = true;
-                    break;
-                }
-            }
-        }
-        if !hit {
-            // mmap'd files no longer hold an fd — jars mapped by a gradle
-            // daemon or .so files inside a venv only show up in `maps`.
-            // Substring matching can over-report (a false "in-use" just skips
-            // a cleanup pass) but never under-report.
-            if let Ok(maps) = fs::read_to_string(base.join("maps")) {
-                hit = maps.lines().any(|l| l.contains(needle.as_str()));
-            }
-        }
-        if hit {
-            hits.push(pid);
-        }
-    }
-    hits
-}
-
-#[cfg(not(target_os = "linux"))]
-fn proc_using_impl(_dir: &Path) -> Vec<u32> {
-    Vec::new()
+    crate::os::pids_using(&dir)
 }
 
 fn dir_mtime(path: &Path) -> Option<SystemTime> {
@@ -215,18 +160,28 @@ pub fn guard<'a>(c: &'a Candidate, policy: &Policy) -> Result<Prepared<'a>, Skip
         return Err(skip("warm", "written within the guard window"));
     }
 
-    let pids = pids_using(proc_scope(c));
-    if !pids.is_empty() {
-        return Err(skip(
-            "in-use",
-            format!(
-                "held by process(es) {}",
-                pids.iter()
-                    .map(u32::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-        ));
+    match pids_using(proc_scope(c)) {
+        Some(pids) if !pids.is_empty() => {
+            return Err(skip(
+                "in-use",
+                format!(
+                    "held by process(es) {}",
+                    pids.iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            ));
+        }
+        // The platform cannot enumerate processes: fail closed. A deletion
+        // tool that cannot check who is running deletes nothing that day.
+        None => {
+            return Err(skip(
+                "proc-unknown",
+                "process liveness unavailable on this platform run",
+            ));
+        }
+        Some(_) => {}
     }
 
     // Lock last: it is the interlock that closes the gap between every check
