@@ -20,14 +20,62 @@ case "${OS}" in
   *) echo "unsupported OS: ${OS} (use install.ps1 on Windows)"; exit 1 ;;
 esac
 
-say "Building rldyour-cleaner"
-cargo build --release --manifest-path "${ROOT}/Cargo.toml"
+REPO="NDDev-OpenNetwork/rldyour-cleaner"
 
-say "Installing the binary into ${BIN_DIR}"
-# `install -D` is GNU coreutils only — mkdir + install -m works on BSD/macOS.
-mkdir -p "${BIN_DIR}"
-install -m755 "${ROOT}/target/release/rldyour-cleaner" \
-  "${BIN_DIR}/rldyour-cleaner"
+platform_slug() {
+  case "${OS}:$(uname -m)" in
+    Linux:x86_64)              echo linux-x86_64 ;;
+    Linux:aarch64|Linux:arm64) echo linux-aarch64 ;;
+    Darwin:arm64)              echo macos-aarch64 ;;
+    Darwin:x86_64)             echo macos-x86_64 ;;
+    *) return 1 ;;
+  esac
+}
+
+# No Rust toolchain (or RLDYOUR_CLEANER_USE_RELEASE=1): fetch the latest
+# release archive for this platform and verify its SHA-256 before it ever
+# reaches the filesystem permanently.
+install_from_release() {
+  command -v curl >/dev/null || return 1
+  local slug tag asset tmp
+  slug="$(platform_slug)" || return 1
+  tag="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
+  [ -n "${tag}" ] || return 1
+  asset="rldyour-cleaner-${tag}-${slug}.tar.gz"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "${tmp}"' RETURN
+  say "Downloading ${asset}"
+  curl -fsSL "https://github.com/${REPO}/releases/download/${tag}/${asset}" \
+    -o "${tmp}/${asset}"
+  curl -fsSL "https://github.com/${REPO}/releases/download/${tag}/${asset}.sha256" \
+    -o "${tmp}/${asset}.sha256"
+  (cd "${tmp}" && if command -v sha256sum >/dev/null; then
+    sha256sum -c "${asset}.sha256"
+  else
+    shasum -a 256 -c "${asset}.sha256"
+  fi)
+  tar -xzf "${tmp}/${asset}" -C "${tmp}"
+  mkdir -p "${BIN_DIR}"
+  install -m755 "${tmp}/rldyour-cleaner" "${BIN_DIR}/rldyour-cleaner"
+}
+
+if command -v cargo >/dev/null && [ "${RLDYOUR_CLEANER_USE_RELEASE:-0}" != "1" ]; then
+  say "Building rldyour-cleaner"
+  cargo build --release --manifest-path "${ROOT}/Cargo.toml"
+  say "Installing the binary into ${BIN_DIR}"
+  # `install -D` is GNU coreutils only — mkdir + install -m works on BSD/macOS.
+  mkdir -p "${BIN_DIR}"
+  install -m755 "${ROOT}/target/release/rldyour-cleaner" \
+    "${BIN_DIR}/rldyour-cleaner"
+else
+  say "Installing the binary into ${BIN_DIR} from the latest release"
+  install_from_release || {
+    echo "could not fetch a release binary for ${OS} $(uname -m);" \
+      "install Rust (https://rustup.rs) and re-run to build from source" >&2
+    exit 1
+  }
+fi
 
 if [ "${OS}" = "Linux" ]; then
   UNIT_DIR="${HOME}/.config/systemd/user"

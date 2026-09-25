@@ -18,12 +18,12 @@ platform) and `platforms/<os>/` (scheduler + installer assets).
 | `src/config.rs` | TOML policy under `os::config_dir()`, defaults = balanced profile |
 | `src/os/` | platform layer — shared helpers in `mod.rs`, liveness per OS |
 | `src/os/linux.rs` | `/proc` probe (exe/cwd/fd/maps), per-call |
-| `src/os/unix_lsof.rs` | `lsof` snapshot probe — macOS + BSDs |
+| `src/os/unix_lsof.rs` | `lsof` probe — macOS + BSDs; fresh snapshot per call, never cached |
 | `src/os/windows.rs` | no enumeration; Windows file locking + `Busy` mapping IS the guard |
 | `src/report.rs` | JSON report persisted to `os::state_dir()/last-run.json` |
 | `platforms/linux/` | systemd units + tmpfiles.d override (/tmp 30d→7d) |
 | `platforms/macos/` | launchd plist, `@HOME@` templated |
-| `install.sh` / `uninstall.sh` | Linux + macOS dispatcher (`install -m`, not `-D` — GNU-only) |
+| `install.sh` / `uninstall.sh` | Linux + macOS dispatcher (`install -m`, not `-D` — GNU-only); builds via cargo or falls back to the SHA-256-checked latest release |
 | `install.ps1` / `uninstall.ps1` | Windows — Task Scheduler via `Register-ScheduledTask` (StartWhenAvailable ≈ systemd `Persistent`) |
 
 ## Invariants (do not break these)

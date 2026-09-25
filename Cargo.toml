@@ -6,6 +6,9 @@ rust-version = "1.88" # let-chains in `if`; also the floor for cargo's own GC be
 license = "AGPL-3.0-or-later"
 description = "Policy-driven janitor for stale build artifacts and tool caches"
 repository = "https://github.com/NDDev-OpenNetwork/rldyour-cleaner"
+homepage = "https://github.com/NDDev-OpenNetwork/rldyour-cleaner"
+keywords = ["cleaner", "cache", "disk-space", "build-artifacts", "janitor"]
+categories = ["command-line-utilities"]
 
 # Every dependency earns its place: `clap` is the estate's CLI convention and
 # hand-rolling subcommand parsing buys nothing; `serde`+`toml` give the user an

@@ -1,5 +1,10 @@
 # rldyour-cleaner
 
+[![CI](https://github.com/NDDev-OpenNetwork/rldyour-cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/NDDev-OpenNetwork/rldyour-cleaner/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/NDDev-OpenNetwork/rldyour-cleaner)](https://github.com/NDDev-OpenNetwork/rldyour-cleaner/releases/latest)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+[![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-informational)](Cargo.toml)
+
 A janitor for developer machines: it removes build artifacts and tool caches
 that are **provably stale**, on a schedule, without ever breaking a build or
 app that is currently running.
@@ -78,6 +83,10 @@ to each OS's own mechanism rather than reinvented.
 ./install.sh       # Linux: systemd --user timer · macOS: launchd agent
 .\install.ps1      # Windows: Task Scheduler task
 ```
+
+With `cargo` on PATH the installer builds from source; without it (or with
+`RLDYOUR_CLEANER_USE_RELEASE=1`) it downloads the latest release archive
+and verifies its `.sha256` before installing — no Rust toolchain needed.
 
 Everything lands under the user's home/profile; the only privileged step is
 Linux's optional `/etc/tmpfiles.d/tmp.conf` drop-in (skipped with a printed

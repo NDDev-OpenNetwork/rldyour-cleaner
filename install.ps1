@@ -14,16 +14,52 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\rldyour-cleaner'
 $Exe = Join-Path $InstallDir 'rldyour-cleaner.exe'
 $TaskName = 'rldyour-cleaner'
+$Repo = 'NDDev-OpenNetwork/rldyour-cleaner'
 
 function Say($msg) { Write-Host "==> $msg" -ForegroundStyle Cyan }
 
-Say 'Building rldyour-cleaner'
-& cargo build --release --manifest-path (Join-Path $Root 'Cargo.toml')
-if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+# No Rust toolchain (or RLDYOUR_CLEANER_USE_RELEASE=1): fetch the latest
+# release zip and
+# verify its SHA-256 before the binary lands in $InstallDir.
+function Install-FromRelease {
+    $rel = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest"
+    $tag = $rel.tag_name
+    if (-not $tag) { throw 'could not resolve the latest release tag' }
+    $asset = "rldyour-cleaner-$tag-windows-x86_64.zip"
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    try {
+        $zip = Join-Path $tmp $asset
+        Say "Downloading $asset"
+        $base = "https://github.com/$Repo/releases/download/$tag"
+        Invoke-WebRequest "$base/$asset" -OutFile $zip -UseBasicParsing
+        $expected = ((Invoke-RestMethod "$base/$asset.sha256") -split '\s+')[0].ToLower()
+        $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+        if ($expected -ne $actual) {
+            throw "checksum mismatch for $asset ($actual != $expected)"
+        }
+        Expand-Archive $zip -DestinationPath $tmp -Force
+        New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+        Copy-Item -Force (Join-Path $tmp 'rldyour-cleaner.exe') $Exe
+    }
+    finally {
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    }
+}
 
-Say "Installing the binary into $InstallDir"
-New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Copy-Item -Force (Join-Path $Root 'target\release\rldyour-cleaner.exe') $Exe
+if ((Get-Command cargo -ErrorAction SilentlyContinue) -and -not $env:RLDYOUR_CLEANER_USE_RELEASE) {
+    Say 'Building rldyour-cleaner'
+    & cargo build --release --manifest-path (Join-Path $Root 'Cargo.toml')
+    if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+
+    Say "Installing the binary into $InstallDir"
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    Copy-Item -Force (Join-Path $Root 'target\release\rldyour-cleaner.exe') $Exe
+}
+else {
+    Say "Installing the binary into $InstallDir from the latest release"
+    Install-FromRelease
+}
 
 $ConfigDir = Join-Path $env:LOCALAPPDATA 'rldyour-cleaner'
 if (-not (Test-Path (Join-Path $ConfigDir 'config.toml'))) {
