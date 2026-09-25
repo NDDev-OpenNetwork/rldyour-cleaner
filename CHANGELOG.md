@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-09-25
+
 ### Added
 
 - `scan` / `run` / `status` / `config` CLI (`--dry-run`, `--json`, `-v`).

@@ -162,7 +162,7 @@ legs upload, so a failed build never ships a partial release. The tag must
 equal `version` in `Cargo.toml`.
 
 ```sh
-git tag -s v0.2.0 -m v0.2.0 && git push --tags
+git tag -s v0.0.1 -m v0.0.1 && git push --tags
 ```
 
 Assets: `linux-x86_64`, `linux-aarch64`, `macos-aarch64`, `macos-x86_64`,
