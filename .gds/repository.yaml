@@ -1,0 +1,60 @@
+schema_version: 1
+repository:
+  id: repo_01M3JJXE0ER7SZ6E378J7AFWDJ
+  display_name: rldyour-cleaner
+  roles:
+  - project
+  lifecycle: active
+provider:
+  type: github
+  installation: installation:github-opennetwork
+  owner: NDDev-OpenNetwork
+  repository_id: 1387199510
+  name: rldyour-cleaner
+classification:
+  portfolios:
+  - portfolio:opennetwork-projects
+  visibility_contract: public
+  data_classification: public
+product:
+  purpose: >-
+    Safe scheduled janitor for developer machines: deletes provably-stale
+    build artifacts and tool caches on a daily OS-scheduled run on Linux,
+    macOS and Windows, guarded so it can never break a running build.
+verification:
+  commands:
+    lint:
+      - "cargo fmt --check"
+      - "cargo clippy --all-targets -- -D warnings"
+      - "shellcheck install.sh uninstall.sh"
+      - "actionlint"
+    test:
+      - "cargo test"
+    build:
+      - "cargo check --all-targets --target aarch64-apple-darwin"
+      - "cargo check --all-targets --target x86_64-pc-windows-msvc"
+      - "cargo check --all-targets --target aarch64-unknown-linux-gnu"
+  required:
+    - "lint"
+    - "test"
+    - "build"
+policy:
+  profiles:
+  - repository-default
+  - organization-default
+  rollout_ring: standard
+git:
+  default_branch: main
+  integration: pull-request
+  branch_model: task-branches
+  handoff_pr: preferred
+  cleanup: merged-only
+agent:
+  context_profile: project-default
+  generated_agents: false
+  serena:
+    enabled: true
+    provenance_required: true
+release:
+  mode: "github-release"
+  tag_style: "v-semver"
