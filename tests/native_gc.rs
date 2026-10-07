@@ -445,6 +445,23 @@ fn command_output_is_bounded_and_timeout_reaps_the_child() {
     );
     assert!(start.elapsed() < Duration::from_secs(5));
 }
+
+#[test]
+fn truncated_discovery_cannot_be_trimmed_into_an_eligible_existing_path() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    let output = f
+        .cli(&cache, "")
+        .env("FIXTURE_PATH_TRUNCATION", "1")
+        .args(["run", "--json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["caches"][0]["action"], "failed");
+    assert!(cache.join("unused").exists());
+    assert!(!f.0.join("gc.log").exists());
+}
 #[cfg(unix)]
 #[test]
 fn redirected_cache_and_report_destinations_are_refused() {

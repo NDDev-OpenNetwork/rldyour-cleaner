@@ -20,6 +20,9 @@ fn main() {
     if args.first().is_some_and(|s| s=="sleep") { std::thread::sleep(Duration::from_secs(30));return; }
     if args==["--version"] { println!("uv {}",env::var("FIXTURE_UV_VERSION").unwrap_or_else(|_|"0.12.17".into())); return; }
     if args.get(0).is_some_and(|s|s=="cache") && args.get(1).is_some_and(|s|s=="dir") {
+        if env::var_os("FIXTURE_PATH_TRUNCATION").is_some() {
+            print!("{}{}", env::var("FIXTURE_CACHE").unwrap(), " ".repeat(20 * 1024)); return;
+        }
         println!("{}",env::var("FIXTURE_CACHE").unwrap()); return;
     }
     assert_eq!(&args[..2],["cache","prune"]);
