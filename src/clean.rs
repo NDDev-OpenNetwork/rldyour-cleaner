@@ -18,11 +18,7 @@ impl RunLock {
         }
         let mut options = OpenOptions::new();
         options.create(true).truncate(false).read(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
+        crate::os::private_open_options(&mut options);
         let file = options.open(path)?;
         file.try_lock_exclusive()?;
         Ok(Self { _file: file })

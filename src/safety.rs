@@ -3,19 +3,7 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-pub fn is_redirect(md: &fs::Metadata) -> bool {
-    if md.file_type().is_symlink() {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if md.file_attributes() & 0x400 != 0 {
-            return true;
-        }
-    }
-    false
-}
+pub use crate::os::is_redirect;
 
 /// Reject redirected components, relative paths and parent traversals. A
 /// missing path is allowed for creation; an existing one must resolve wholly.
@@ -49,11 +37,7 @@ pub fn plain_path(path: &Path) -> std::io::Result<()> {
 pub fn private_dir(path: &Path) -> std::io::Result<()> {
     plain_path(path)?;
     fs::create_dir_all(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    }
+    crate::os::private_permissions(path, true)?;
     Ok(())
 }
 

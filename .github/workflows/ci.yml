@@ -45,7 +45,7 @@ jobs:
             cargo check --locked --all-targets --target "$t"
           done
 
-      - run: shellcheck install.sh uninstall.sh scripts/*.sh
+      - run: shellcheck -x install.sh uninstall.sh platforms/*/*.sh scripts/*.sh
       - run: ./scripts/check-version.sh
 
       - name: Validate the launchd plist
@@ -75,11 +75,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Synthetic Unix installer lifecycle
+        if: runner.os != 'Windows'
+        run: python3 scripts/check-installers.py
+      - name: Synthetic Windows installer lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/check-installers.ps1
       - name: Parse the PowerShell scripts
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          foreach ($f in 'install.ps1', 'uninstall.ps1') {
+          foreach ($f in 'install.ps1', 'uninstall.ps1', 'platforms/windows/install.ps1', 'platforms/windows/uninstall.ps1') {
             try {
               $null = [scriptblock]::Create((Get-Content $f -Raw))
               Write-Host "$f parses"

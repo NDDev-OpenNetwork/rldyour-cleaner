@@ -202,15 +202,17 @@ dependencies = [
 
 [[package]]
 name = "rldyour-cleaner"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "filetime",
  "fs2",
+ "libc",
  "serde",
  "serde_json",
  "toml",
  "walkdir",
+ "windows-sys",
 ]
 
 [[package]]

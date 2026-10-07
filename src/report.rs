@@ -113,15 +113,12 @@ pub fn write_new_private(path: &Path, content: &[u8]) -> std::io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| std::io::Error::other("missing parent"))?;
-    crate::safety::private_dir(parent)?;
+    crate::safety::plain_path(parent)?;
+    std::fs::create_dir_all(parent)?;
     crate::safety::plain_path(path)?;
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
+    crate::os::private_open_options(&mut options);
     let mut file = options.open(path)?;
     if let Err(e) = file.write_all(content).and_then(|_| file.sync_all()) {
         drop(file);

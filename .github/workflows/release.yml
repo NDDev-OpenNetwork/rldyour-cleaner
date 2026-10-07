@@ -92,10 +92,11 @@ jobs:
           cp docs/*.md dist/stage/docs/
           if [ "${{ matrix.ext }}" = "zip" ]; then
             cp install.ps1 uninstall.ps1 dist/stage/
+            cp -R platforms/windows dist/stage/platforms/
             (cd dist/stage && 7z a "${{ github.workspace }}/dist/${base}.zip" ./* >/dev/null)
           else
             cp install.sh uninstall.sh dist/stage/
-            cp -R platforms/linux platforms/macos dist/stage/platforms/
+            cp -R platforms/common platforms/linux platforms/macos dist/stage/platforms/
             tar -czf "dist/${base}.tar.gz" -C dist/stage .
           fi
           rmdir dist/stage/platforms 2>/dev/null || true

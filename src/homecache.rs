@@ -96,13 +96,24 @@ fn prune_uv(policy: &Policy, dry_run: bool) -> CacheResult {
         );
     }
     let path = PathBuf::from(output.stdout);
-    if path.symlink_metadata().is_err() {
-        return result(
-            "uv",
-            vec![path],
-            "absent",
-            "no cache exists; no directory is created",
-        );
+    match path.symlink_metadata() {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return result(
+                "uv",
+                vec![path],
+                "absent",
+                "no cache exists; no directory is created",
+            );
+        }
+        Err(e) => {
+            return result(
+                "uv",
+                vec![path],
+                "failed",
+                format!("cache metadata is unreadable: {e}"),
+            );
+        }
     }
     let canonical = match safety::cache_allowed(&path, policy) {
         Ok(path) => path,

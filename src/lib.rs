@@ -17,6 +17,10 @@ use cli::{Cli, Cmd};
 
 pub fn cli_entry() -> i32 {
     let cli = Cli::parse();
+    if let Err(e) = os::validate_home() {
+        eprintln!("rldyour-cleaner: {e}");
+        return 2;
+    }
     let policy = match config::load(cli.config.as_deref()) {
         Ok(policy) => policy,
         Err(e) => {
@@ -27,7 +31,15 @@ pub fn cli_entry() -> i32 {
     match cli.cmd {
         Cmd::Config { init } => {
             if init {
+                let default_path = cli.config.is_none();
                 let path = cli.config.unwrap_or_else(config::config_path);
+                if default_path
+                    && let Some(parent) = path.parent()
+                    && let Err(e) = safety::private_dir(parent)
+                {
+                    eprintln!("cannot create private config directory: {e}");
+                    return 1;
+                }
                 match report::write_new_private(&path, config::DEFAULT_CONFIG.as_bytes()) {
                     Ok(()) => {
                         println!("wrote {}", path.display());
