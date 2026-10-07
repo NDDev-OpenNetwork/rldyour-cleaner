@@ -1,5 +1,5 @@
 [Unit]
-Description=Reclaim disk space from stale build artifacts and tool caches
+Description=Native unused-cache GC (artifact inventory only)
 Documentation=https://github.com/NDDev-OpenNetwork/rldyour-cleaner
 ConditionPathExists=%h/.local/bin/rldyour-cleaner
 
@@ -11,7 +11,9 @@ Nice=19
 IOSchedulingClass=idle
 # A 200 GB remove_dir_all at idle IO takes minutes; a wedged one must still
 # not run forever.
-TimeoutStartSec=30min
+TimeoutStartSec=5min
+UMask=0077
+MemoryMax=512M
 ExecStart=%h/.local/bin/rldyour-cleaner run
 # The unit's PATH is minimal by default; user-installed toolchains (uv, go,
 # pnpm) live under %h, and the cleaner delegates cache GC to them when found.
@@ -28,5 +30,4 @@ RestrictRealtime=true
 RestrictNamespaces=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
-RemoveIPC=true
 SystemCallArchitectures=native

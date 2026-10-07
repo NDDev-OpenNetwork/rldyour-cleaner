@@ -1,32 +1,6 @@
-//! The platform layer: every OS difference lives under `os/`.
-//!
-//! Two kinds of surface:
-//!
-//! * Shared helpers implemented once with `cfg!` branches — home/config/
-//!   state/cache dirs, `~` expansion, PATH lookup, filesystem fill level.
-//! * The process-liveness probe, `pids_using`, which has no portable shape:
-//!   each platform gets its own module and its own honest answer.
-//!
-//! `pids_using` returns `Option<Vec<u32>>` — `None` means "this platform
-//! cannot tell". Callers must treat `None` as in-use and skip: a deletion
-//! tool fails closed, never open.
+//! Platform conventions, executable resolution and read-only disk statistics.
 
 use std::path::{Path, PathBuf};
-
-#[cfg(target_os = "linux")]
-mod linux;
-#[cfg(target_os = "linux")]
-pub(crate) use linux::pids_using;
-
-#[cfg(all(unix, not(target_os = "linux")))]
-mod unix_lsof;
-#[cfg(all(unix, not(target_os = "linux")))]
-pub(crate) use unix_lsof::pids_using;
-
-#[cfg(windows)]
-mod windows;
-#[cfg(windows)]
-pub(crate) use windows::pids_using;
 
 /// The user's home directory: `%USERPROFILE%` on Windows, `$HOME` elsewhere,
 /// with `std::env::home_dir` as the last-resort answer. A machine with no
@@ -125,7 +99,7 @@ pub fn fs_use_pct(path: &Path) -> Option<u64> {
     if total == 0 {
         return None;
     }
-    Some(((total - avail) as u128 * 100 / total as u128) as u64)
+    Some((total.saturating_sub(avail) as u128 * 100 / total as u128) as u64)
 }
 
 /// Worst fill level across every filesystem that matters: each scan root and
@@ -138,12 +112,12 @@ pub fn pressure_level(roots: &[PathBuf]) -> Option<u64> {
 
 /// `which` without a dependency: does `name` resolve to an executable file
 /// on PATH? Windows gets its spellings from `%PATHEXT%`.
-pub fn on_path(name: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
+pub fn executable(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
-        .any(|dir| exe_names(name).iter().any(|n| is_executable(&dir.join(n))))
+        .filter(|dir| dir.is_absolute())
+        .flat_map(|dir| exe_names(name).into_iter().map(move |n| dir.join(n)))
+        .find(|p| is_executable(p))
 }
 
 fn exe_names(name: &str) -> Vec<String> {
@@ -162,7 +136,7 @@ fn exe_names(name: &str) -> Vec<String> {
 #[cfg(unix)]
 fn is_executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+    std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(not(unix))]

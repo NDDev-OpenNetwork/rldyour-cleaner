@@ -7,7 +7,7 @@
 # Persistent=true). Linux/macOS use install.sh.
 #Requires -Version 5.1
 [CmdletBinding()]
-param()
+param([string]$Version = '0.1.0')
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -16,14 +16,14 @@ $Exe = Join-Path $InstallDir 'rldyour-cleaner.exe'
 $TaskName = 'rldyour-cleaner'
 $Repo = 'NDDev-OpenNetwork/rldyour-cleaner'
 
-function Say($msg) { Write-Host "==> $msg" -ForegroundStyle Cyan }
+function Say($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
 # No Rust toolchain (or RLDYOUR_CLEANER_USE_RELEASE=1): fetch the latest
 # release zip and
 # verify its SHA-256 before the binary lands in $InstallDir.
 function Install-FromRelease {
-    $rel = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest"
-    $tag = $rel.tag_name
+    if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid version' }
+    $tag = "v$Version"
     if (-not $tag) { throw 'could not resolve the latest release tag' }
     $asset = "rldyour-cleaner-$tag-windows-x86_64.zip"
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
@@ -40,21 +40,28 @@ function Install-FromRelease {
         }
         Expand-Archive $zip -DestinationPath $tmp -Force
         New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-        Copy-Item -Force (Join-Path $tmp 'rldyour-cleaner.exe') $Exe
+        Copy-Item -Force (Join-Path $tmp 'rldyour-cleaner.exe') "$Exe.new"
+        Move-Item "$Exe.new" $Exe -Force
     }
     finally {
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     }
 }
 
-if ((Get-Command cargo -ErrorAction SilentlyContinue) -and -not $env:RLDYOUR_CLEANER_USE_RELEASE) {
+if (Test-Path (Join-Path $Root 'rldyour-cleaner.exe')) {
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    Copy-Item (Join-Path $Root 'rldyour-cleaner.exe') "$Exe.new" -Force
+    Move-Item "$Exe.new" $Exe -Force
+}
+elseif ((Get-Command cargo -ErrorAction SilentlyContinue) -and $env:RLDYOUR_CLEANER_USE_RELEASE -ne '1') {
     Say 'Building rldyour-cleaner'
-    & cargo build --release --manifest-path (Join-Path $Root 'Cargo.toml')
+    & cargo build --release --locked --manifest-path (Join-Path $Root 'Cargo.toml')
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 
     Say "Installing the binary into $InstallDir"
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    Copy-Item -Force (Join-Path $Root 'target\release\rldyour-cleaner.exe') $Exe
+    Copy-Item -Force (Join-Path $Root 'target\release\rldyour-cleaner.exe') "$Exe.new"
+    Move-Item "$Exe.new" $Exe -Force
 }
 else {
     Say "Installing the binary into $InstallDir from the latest release"
@@ -73,11 +80,10 @@ $trigger = New-ScheduledTaskTrigger -Daily -At 03:00
 # StartWhenAvailable is the Persistent=true analogue: a laptop that was off
 # at 03:00 runs the job at next boot/logon. Priority 9 = near-idle: a
 # janitor must never contend with the builds it cleans up after.
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -Priority 9
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -Priority 9 -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 Register-ScheduledTask -TaskName $TaskName -Action $action `
     -Trigger $trigger -Settings $settings -Force | Out-Null
-# First run now, so `status` has data before tonight's slot.
-Start-ScheduledTask -TaskName $TaskName
+# Installation arms the schedule, never invokes cleanup.
 
 Say 'Done'
 @"

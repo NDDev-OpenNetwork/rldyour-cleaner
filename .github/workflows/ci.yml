@@ -45,7 +45,8 @@ jobs:
             cargo check --locked --all-targets --target "$t"
           done
 
-      - run: shellcheck install.sh uninstall.sh
+      - run: shellcheck install.sh uninstall.sh scripts/*.sh
+      - run: ./scripts/check-version.sh
 
       - name: Validate the launchd plist
         run: python3 -c 'import plistlib; plistlib.load(open("platforms/macos/launchd/io.nddev.rldyour-cleaner.plist","rb"))'
@@ -68,11 +69,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, macos-26-intel, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
       - name: Parse the PowerShell scripts
         if: runner.os == 'Windows'
         shell: pwsh
@@ -94,3 +96,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install 1.88.0 --profile minimal
       - run: cargo +1.88.0 check --all-targets --locked
+
+  audit:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: cargo install cargo-audit --locked --version 0.22.1
+      - run: cargo audit

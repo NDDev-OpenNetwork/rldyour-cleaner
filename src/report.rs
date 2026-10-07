@@ -1,23 +1,23 @@
-//! Run report — printed to stdout (the scheduler's log picks it up) and
-//! persisted to `os::state_dir()/last-run.json` for `status`.
-
+//! Private atomic run reports. Native reclaim estimates remain text: a cache
+//! tree's size does not equal free space, especially with hardlinks or clones.
 use crate::homecache::CacheResult;
 use serde::Serialize;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
+static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Serialize)]
 pub struct Entry {
     pub path: String,
     pub kind: String,
     pub bytes: u64,
-    /// deleted | skipped | would-delete | evicted | failed
     pub action: &'static str,
     pub reason: String,
-    /// Days since the newest write inside the candidate (for the scan table).
     pub age_days: u64,
 }
-
 #[derive(Serialize)]
 pub struct Report {
     pub tool: &'static str,
@@ -27,37 +27,29 @@ pub struct Report {
     pub pressure: bool,
     pub dry_run: bool,
     pub fs_use_pct: Option<u64>,
-    pub freed_bytes: u64,
+    pub freed_bytes: Option<u64>,
     pub deleted: usize,
     pub skipped: usize,
     pub failed: usize,
-    /// Matched artifact dirs still inside their age gate (kept).
     pub fresh_matched: usize,
-    /// Bytes inside all stale candidates — the reclaimable picture.
     pub stale_bytes: u64,
     pub entries: Vec<Entry>,
-    /// Per-cache outcomes — otherwise freed_bytes arrives unexplained.
     pub caches: Vec<CacheResult>,
 }
-
-pub fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
 impl Report {
     pub fn new(pressure: bool, dry_run: bool, fs_use_pct: Option<u64>) -> Self {
         Self {
             tool: "rldyour-cleaner",
             version: env!("CARGO_PKG_VERSION"),
-            started_unix: now_unix(),
+            started_unix: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
             duration_ms: 0,
             pressure,
             dry_run,
             fs_use_pct,
-            freed_bytes: 0,
+            freed_bytes: None,
             deleted: 0,
             skipped: 0,
             failed: 0,
@@ -67,62 +59,85 @@ impl Report {
             caches: Vec::new(),
         }
     }
-
-    pub fn push(&mut self, e: Entry) {
-        match e.action {
-            "deleted" | "evicted" | "would-delete" => {
-                self.deleted += 1;
-                self.freed_bytes += e.bytes;
-            }
-            "failed" => self.failed += 1,
-            _ => self.skipped += 1,
-        }
-        self.entries.push(e);
+    pub fn push(&mut self, entry: Entry) {
+        self.skipped += 1;
+        self.entries.push(entry);
     }
-
-    /// Persist for `rldyour-cleaner status`; best-effort, state dir is ours.
-    pub fn save(&self, state_dir: &Path) {
-        let _ = std::fs::create_dir_all(state_dir);
-        let p = state_dir.join("last-run.json");
-        if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(p, json);
+    pub fn save(&self, state_dir: &Path) -> std::io::Result<()> {
+        crate::safety::private_dir(state_dir)?;
+        let destination = state_dir.join("last-run.json");
+        crate::safety::plain_path(&destination)?;
+        let temporary = state_dir.join(format!(
+            ".report-{}-{}.tmp",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let bytes = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
+        write_new_private(&temporary, &bytes)?;
+        let result = fs::rename(&temporary, &destination);
+        if result.is_err() {
+            let _ = fs::remove_file(temporary);
         }
+        result
     }
-
     pub fn print_summary(&self) {
-        if self.dry_run {
+        println!(
+            "rldyour-cleaner {}{}: {} native GC pass(es), {} kept/review-only, {} failed ({}ms)",
+            self.version,
+            if self.dry_run { " (preview)" } else { "" },
+            self.caches
+                .iter()
+                .filter(|c| matches!(c.action, "pruned" | "would-prune"))
+                .count(),
+            self.skipped,
+            self.failed,
+            self.duration_ms
+        );
+        for entry in &self.entries {
             println!(
-                "rldyour-cleaner {} (dry-run): would free {} across {} item(s), {} skipped",
-                self.version,
-                fmt_bytes(self.freed_bytes),
-                self.deleted,
-                self.skipped,
-            );
-        } else {
-            println!(
-                "rldyour-cleaner {}: freed {} across {} item(s), {} skipped, {} failed ({}s, pressure={})",
-                self.version,
-                fmt_bytes(self.freed_bytes),
-                self.deleted,
-                self.skipped,
-                self.failed,
-                self.duration_ms / 1000,
-                self.pressure,
+                "  {} {} {} — {}",
+                entry.action,
+                entry.kind,
+                fmt_bytes(entry.bytes),
+                entry.path
             );
         }
+        for cache in &self.caches {
+            println!("  {}: {} — {}", cache.id, cache.action, cache.detail);
+        }
+        println!("Reclaimed bytes are reported by the owning tool, not inferred from tree size.");
     }
 }
 
-pub fn fmt_bytes(b: u64) -> String {
-    const U: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    if b == 0 {
-        return "0 B".into();
+pub fn write_new_private(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("missing parent"))?;
+    crate::safety::private_dir(parent)?;
+    crate::safety::plain_path(path)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    let mut v = b as f64;
-    let mut i = 0;
-    while v >= 1024.0 && i < U.len() - 1 {
-        v /= 1024.0;
-        i += 1;
+    let mut file = options.open(path)?;
+    if let Err(e) = file.write_all(content).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(e);
     }
-    format!("{v:.1} {}", U[i])
+    Ok(())
+}
+
+pub fn fmt_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < 4 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    format!("{value:.1} {}", UNITS[unit])
 }

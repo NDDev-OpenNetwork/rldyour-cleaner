@@ -17,12 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the tag matches the crate version
-        run: |
-          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          if [ "v${crate}" != "${GITHUB_REF_NAME}" ]; then
-            echo "tag ${GITHUB_REF_NAME} != version ${crate} in Cargo.toml"
-            exit 1
-          fi
+        run: ./scripts/check-version.sh "${GITHUB_REF_NAME}"
       - name: Create draft
         run: gh release create "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag
         env:
@@ -51,12 +46,11 @@ jobs:
             name: macos-aarch64
             bin: rldyour-cleaner
             ext: tar.gz
-          - os: macos-latest
+          - os: macos-26-intel
             target: x86_64-apple-darwin
             name: macos-x86_64
             bin: rldyour-cleaner
             ext: tar.gz
-            cross: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             name: windows-x86_64
@@ -84,21 +78,29 @@ jobs:
           # Only consulted when the aarch64-linux leg actually links.
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
+      - name: Native tests
+        if: ${{ !matrix.cross }}
+        run: cargo test --locked
+
       - name: Package
         shell: bash
         run: |
-          mkdir -p dist
+          mkdir -p dist/stage/platforms
           base="rldyour-cleaner-${GITHUB_REF_NAME}-${{ matrix.name }}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" dist/stage/
+          cp LICENSE README.md CHANGELOG.md THIRD_PARTY_NOTICES.md dist/stage/
           if [ "${{ matrix.ext }}" = "zip" ]; then
-            # zip from inside the release dir so the archive stays flat
-            (cd "target/${{ matrix.target }}/release" \
-              && 7z a "${{ github.workspace }}/dist/${base}.zip" "${{ matrix.bin }}" >/dev/null)
+            cp install.ps1 uninstall.ps1 dist/stage/
+            (cd dist/stage && 7z a "${{ github.workspace }}/dist/${base}.zip" ./* >/dev/null)
           else
-            tar -czf "dist/${base}.tar.gz" \
-              -C "target/${{ matrix.target }}/release" "${{ matrix.bin }}"
+            cp install.sh uninstall.sh dist/stage/
+            cp -R platforms/linux platforms/macos dist/stage/platforms/
+            tar -czf "dist/${base}.tar.gz" -C dist/stage .
           fi
+          rmdir dist/stage/platforms 2>/dev/null || true
           cd dist
-          for f in *; do
+          for f in *.tar.gz *.zip; do
+            [ -f "$f" ] || continue
             if command -v sha256sum >/dev/null; then
               sha256sum "$f" > "$f.sha256"
             else
@@ -108,7 +110,10 @@ jobs:
 
       - name: Upload assets
         shell: bash
-        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+        run: |
+          shopt -s nullglob
+          gh release upload "$GITHUB_REF_NAME" dist/*.sha256 dist/*.tar.gz dist/*.zip --clobber
+        # Each matrix leg has just one archive extension; nullglob omits the other.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

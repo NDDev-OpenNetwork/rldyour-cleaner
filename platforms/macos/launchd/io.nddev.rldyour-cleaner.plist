@@ -32,11 +32,12 @@
         <key>Minute</key><integer>0</integer>
     </dict>
 
-    <!-- Only the clock starts it; install.sh kickstarts the first run. -->
+    <!-- Only the clock starts it; installation never triggers cleanup. -->
     <key>RunAtLoad</key>
     <false/>
 
     <!-- Idle-class everything. -->
+    <key>Umask</key><integer>63</integer>
     <key>ProcessType</key>
     <string>Background</string>
     <key>LowPriorityIO</key>

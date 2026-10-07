@@ -1,11 +1,9 @@
 //! End-to-end fixtures: real dirs, real mtimes, real guards. Each test builds
 //! a tiny project tree under its own temp dir, ages it with `filetime`, and
-//! exercises scan → guard → execute.
+//! exercises read-only discovery and preservation.
 
 use filetime::{FileTime, set_file_mtime, set_file_times};
-use rldyour_cleaner::clean;
 use rldyour_cleaner::config::{Ages, Policy};
-use rldyour_cleaner::safety;
 use rldyour_cleaner::scan::{self, Candidate};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -75,6 +73,11 @@ fn walkdir_collect(root: &Path) -> Vec<PathBuf> {
 fn policy_for(root: &Path) -> Policy {
     Policy {
         roots: vec![root.to_path_buf()],
+        categories: rldyour_cleaner::config::Categories {
+            projects: true,
+            home_caches: false,
+            ..Policy::default().categories
+        },
         // Tests set fixture mtimes explicitly; the freshness floor is about
         // *now* writes, not fixture age, so zero it to keep guards honest.
         guard_fresh_minutes: 0,
@@ -94,7 +97,7 @@ fn stale_candidates(policy: &Policy) -> Vec<Candidate> {
 }
 
 #[test]
-fn stale_rust_target_is_a_candidate_and_deletes() {
+fn stale_rust_target_is_reported_but_never_removed() {
     let root = fixture("rust-stale");
     let proj = root.join("crate");
     fs::create_dir_all(proj.join("src")).unwrap();
@@ -112,10 +115,10 @@ fn stale_rust_target_is_a_candidate_and_deletes() {
     assert_eq!(stale[0].path, target);
     assert!(stale[0].size_bytes >= 4096);
 
-    let c = &stale[0];
-    let prepared = safety::guard(c, &policy).expect("guards should pass");
-    assert!(clean::execute(&prepared).is_ok());
-    assert!(!target.exists());
+    let report = rldyour_cleaner::runner::evaluate(&policy, true, true).unwrap();
+    assert_eq!(report.entries.len(), 1);
+    assert_eq!(report.entries[0].action, "review-only");
+    assert!(target.exists());
 }
 
 #[test]
@@ -158,114 +161,24 @@ fn node_modules_follows_project_activity_not_its_own_age() {
 }
 
 #[test]
-fn protected_substring_blocks_deletion() {
+fn protected_projects_are_not_descended_into() {
     let root = fixture("protected");
-    let proj = root.join("keepme-app");
-    fs::create_dir_all(proj.join("target/debug")).unwrap();
-    fs::write(proj.join("Cargo.toml"), "[package]\nname = \"x\"").unwrap();
+    let project = root.join("keepme-app");
+    fs::create_dir_all(project.join("target/debug")).unwrap();
+    fs::write(project.join("Cargo.toml"), "[package]").unwrap();
     age_tree(&root, 30);
-
     let mut policy = policy_for(&root);
-    let stale = stale_candidates(&policy);
-    assert_eq!(stale.len(), 1);
     policy.protect = vec!["keepme-app".into()];
-    match safety::guard(&stale[0], &policy) {
-        Err(s) if s.reason == "protected" => {}
-        other => panic!("expected protected skip, got {:?}", other.is_ok()),
-    }
+    assert!(stale_candidates(&policy).is_empty());
+    assert!(project.join("target/debug").exists());
 }
 
 #[test]
-fn process_holding_project_blocks_node_modules() {
-    // Unix liveness probes (/proc on Linux, lsof elsewhere) see a foreign
-    // process's cwd; on Windows the probe is deletion-time locking, which
-    // this test cannot exercise — the guard there is covered by Busy-mapped
-    // rename refusals, not an enumeration.
-    if !cfg!(unix) {
-        return;
-    }
-    let root = fixture("proc-held");
-    let proj = root.join("app");
-    fs::create_dir_all(proj.join("node_modules/pkg")).unwrap();
-    fs::write(proj.join("package.json"), "{}").unwrap();
-    age_tree(&root, 40);
-
-    let mut policy = policy_for(&root);
-    // The freshness floor is off for the fixture; the proc guard is the star.
-    policy.guard_fresh_minutes = 0;
-    let stale = stale_candidates(&policy);
-    assert_eq!(stale.len(), 1);
-
-    let child = std::process::Command::new("sleep")
-        .arg("10")
-        .current_dir(&proj)
-        .spawn()
-        .expect("spawn sleep");
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    let verdict = safety::guard(&stale[0], &policy);
-    let mut child = child;
-    let _ = child.kill();
-    let _ = child.wait();
-    match verdict {
-        Err(s) if s.reason == "in-use" => {}
-        _ => panic!("expected in-use skip while a process sits in the project"),
-    }
-}
-
-#[test]
-fn held_cargo_lock_blocks_target_deletion() {
-    let root = fixture("cargo-locked");
-    let proj = root.join("crate");
-    let target = proj.join("target");
-    fs::create_dir_all(&target).unwrap();
-    fs::write(proj.join("Cargo.toml"), "[package]\nname = \"x\"").unwrap();
-    let lock_path = target.join(".cargo-lock");
-    fs::write(&lock_path, b"").unwrap();
-    age_tree(&root, 30);
-
-    let policy = policy_for(&root);
-    let stale = stale_candidates(&policy);
-    assert_eq!(stale.len(), 1);
-
-    // Hold the lock the way cargo does: exclusive, for the whole build.
-    use fs2::FileExt;
-    let f = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&lock_path)
-        .unwrap();
-    f.lock_exclusive().unwrap();
-    let verdict = safety::guard(&stale[0], &policy);
-    FileExt::unlock(&f).unwrap();
-    match verdict {
-        Err(s) if s.reason == "locked" => {}
-        _ => panic!("expected locked skip while .cargo-lock is held"),
-    }
-}
-
-#[test]
-fn mismatched_kind_and_path_is_refused() {
-    // A Candidate built by hand with a name that does not match its kind must
-    // not get past path_guard — the shape check exists for callers that did
-    // not come from scan's own matching.
-    let root = fixture("shape");
-    let dir = root.join("proj/random_dir");
-    fs::create_dir_all(&dir).unwrap();
-    age_tree(&dir, 40);
-
-    let c = Candidate {
-        path: dir.clone(),
-        kind: rldyour_cleaner::kinds::Kind::RustTarget,
-        size_bytes: 0,
-        newest: None,
-        project_root: None,
-    };
-    let policy = policy_for(&root);
-    match safety::guard(&c, &policy) {
-        Err(s) if s.reason == "shape" => {}
-        other => panic!("expected shape refusal, got {:?}", other.is_ok()),
-    }
-    assert!(dir.exists());
+fn missing_or_unreadable_age_information_never_means_cold() {
+    assert!(scan::any_newer_than(
+        Path::new("/does-not-exist-cleaner-fixture"),
+        std::time::SystemTime::now()
+    ));
 }
 
 #[test]

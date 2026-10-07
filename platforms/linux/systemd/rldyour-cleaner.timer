@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily reclaim of stale build artifacts and tool caches
+Description=Daily native unused-cache GC
 
 [Timer]
 # Boot catch-up plus a daily slot; Persistent covers missed runs after
