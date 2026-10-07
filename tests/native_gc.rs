@@ -358,6 +358,82 @@ fn weekly_apt_policy_preview_never_changes_system_or_runs_a_tool() {
     assert!(!f.0.join("gc.log").exists());
     assert!(!f.state().exists());
 }
+
+#[test]
+fn doctor_never_creates_state_or_runs_gc_even_with_an_explicit_prune_opt_in() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    let report = json(
+        f.cli(&cache, "")
+            .args(["doctor", "--json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(report["errors"], 0);
+    assert!(report["warnings"].as_u64().unwrap() > 0);
+    assert!(!f.state().exists());
+    assert!(!f.0.join("gc.log").exists());
+    assert!(cache.join("unused").exists());
+    let mut previous = rldyour_cleaner::report::Report::new(false, false, None);
+    previous.failed = 1;
+    previous.save(&f.state()).unwrap();
+    let bytes = fs::read(f.state().join("last-run.json")).unwrap();
+    let output = f
+        .cli(&cache, "")
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(report["errors"].as_u64().unwrap() > 0);
+    assert_eq!(fs::read(f.state().join("last-run.json")).unwrap(), bytes);
+    assert!(!f.0.join("gc.log").exists());
+}
+
+#[test]
+fn doctor_reports_bad_policy_as_structured_error_without_falling_back() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    let output = f
+        .cli(&cache, "unknown_key=true")
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["errors"], 1);
+    assert_eq!(report["checks"][0]["id"], "policy");
+    assert!(!f.state().exists());
+    assert!(!f.0.join("gc.log").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn inventory_refuses_redirected_parent_without_following_cache_children() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    let actual = f.0.join("actual-node-store");
+    fs::create_dir_all(actual.join("_cacache")).unwrap();
+    fs::write(actual.join("_cacache/keep"), b"fixture-data").unwrap();
+    let link = f.0.join("redirected-node-store");
+    std::os::unix::fs::symlink(&actual, &link).unwrap();
+    let report = json(
+        f.cli(&cache, "[native_gc]\nuv=false")
+            .env("npm_config_cache", &link)
+            .args(["run", "--dry-run", "--json"])
+            .output()
+            .unwrap(),
+    );
+    let npm = report["caches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "npm")
+        .unwrap();
+    assert_eq!(npm["action"], "protected");
+    assert!(actual.join("_cacache/keep").exists());
+    assert!(!f.state().exists());
+}
 #[test]
 fn failed_native_gc_never_falls_back_to_file_deletion() {
     let f = Fixture::new();

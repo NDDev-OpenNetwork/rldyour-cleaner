@@ -3,6 +3,7 @@
 pub mod clean;
 pub mod cli;
 pub mod config;
+pub mod doctor;
 pub mod homecache;
 pub mod kinds;
 pub mod maintenance;
@@ -20,17 +21,28 @@ use cli::{Cli, Cmd};
 pub fn cli_entry() -> i32 {
     let cli = Cli::parse();
     if let Err(e) = os::validate_home() {
-        eprintln!("rldyour-cleaner: {e}");
-        return 2;
+        return input_error(&cli.cmd, "home", e);
     }
     let policy = match config::load(cli.config.as_deref()) {
         Ok(policy) => policy,
         Err(e) => {
-            eprintln!("rldyour-cleaner: {e}");
-            return 2;
+            return input_error(&cli.cmd, "policy", e);
         }
     };
     match cli.cmd {
+        Cmd::Doctor { json } => {
+            let report = doctor::inspect(&policy);
+            if json {
+                if let Err(e) = serde_json::to_writer(std::io::stdout(), &report) {
+                    eprintln!("doctor output failed: {e}");
+                    return 1;
+                }
+                println!();
+            } else {
+                report.print();
+            }
+            if report.errors == 0 { 0 } else { 1 }
+        }
         Cmd::AptAutoclean { enable } => {
             if !enable {
                 print!("{}", system_policy::APT_AUTOCLEAN_POLICY);
@@ -96,6 +108,21 @@ pub fn cli_entry() -> i32 {
         Cmd::Scan { json, verbose: _ } => run(&policy, true, json),
         Cmd::Run { dry_run, json } => run(&policy, dry_run, json),
     }
+}
+
+fn input_error(cmd: &Cmd, id: &str, detail: String) -> i32 {
+    if matches!(cmd, Cmd::Doctor { json: true }) {
+        let report = doctor::DoctorReport::from_checks(
+            vec![doctor::Check::new(id, doctor::State::Error, detail)],
+            doctor::now(),
+        );
+        if serde_json::to_writer(std::io::stdout(), &report).is_ok() {
+            println!();
+        }
+    } else {
+        eprintln!("rldyour-cleaner: {detail}");
+    }
+    2
 }
 
 fn run(policy: &config::Policy, dry_run: bool, json: bool) -> i32 {

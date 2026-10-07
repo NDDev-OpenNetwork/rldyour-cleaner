@@ -7,7 +7,7 @@
 # Persistent=true). Linux/macOS use install.sh.
 #Requires -Version 5.1
 [CmdletBinding()]
-param([string]$Version = '0.2.1')
+param([string]$Version = '0.3.0')
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
@@ -33,6 +33,16 @@ Assert-PlainPath "$Exe.new"
 
 function Say($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
+function Install-VerifiedBinary([string]$Binary) {
+    # Every route validates policy before replacing installed code.
+    & $Binary config | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Invalid existing policy; installed binary and task preserved' }
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    Copy-Item -Force $Binary "$Exe.new"
+    Move-Item "$Exe.new" $Exe -Force
+}
+
+
 # No Rust toolchain (or RLDYOUR_CLEANER_USE_RELEASE=1): fetch the latest
 # release zip and
 # verify its SHA-256 before the binary lands in $InstallDir.
@@ -54,9 +64,7 @@ function Install-FromRelease {
             throw "checksum mismatch for $asset ($actual != $expected)"
         }
         Expand-Archive $zip -DestinationPath $tmp -Force
-        New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-        Copy-Item -Force (Join-Path $tmp 'rldyour-cleaner.exe') "$Exe.new"
-        Move-Item "$Exe.new" $Exe -Force
+        Install-VerifiedBinary (Join-Path $tmp 'rldyour-cleaner.exe')
     }
     finally {
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
@@ -64,11 +72,7 @@ function Install-FromRelease {
 }
 
 if (Test-Path (Join-Path $Root 'rldyour-cleaner.exe')) {
-    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    & (Join-Path $Root 'rldyour-cleaner.exe') config | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Invalid existing policy' }
-    Copy-Item (Join-Path $Root 'rldyour-cleaner.exe') "$Exe.new" -Force
-    Move-Item "$Exe.new" $Exe -Force
+    Install-VerifiedBinary (Join-Path $Root 'rldyour-cleaner.exe')
 }
 elseif ((Get-Command cargo -ErrorAction SilentlyContinue) -and $env:RLDYOUR_CLEANER_USE_RELEASE -ne '1') {
     Say 'Building rldyour-cleaner'
@@ -76,9 +80,7 @@ elseif ((Get-Command cargo -ErrorAction SilentlyContinue) -and $env:RLDYOUR_CLEA
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 
     Say "Installing the binary into $InstallDir"
-    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    Copy-Item -Force (Join-Path $Root 'target\release\rldyour-cleaner.exe') "$Exe.new"
-    Move-Item "$Exe.new" $Exe -Force
+    Install-VerifiedBinary (Join-Path $Root 'target\release\rldyour-cleaner.exe')
 }
 else {
     Say "Installing the binary into $InstallDir from the latest release"

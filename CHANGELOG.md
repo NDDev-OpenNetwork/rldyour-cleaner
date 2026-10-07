@@ -6,6 +6,33 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-07
+
+### Added
+
+- Read-only `doctor` with human/JSON reports. Independent per-OS adapters
+  inspect registered launchd/systemd/Task Scheduler jobs and completed results;
+  idle, running, queued, never-run and failed states are distinguished. It
+  checks bounded last-run/ledger state, stale/future timestamps, report version
+  and explicit cached-environment deletion opt-in without invoking native GC,
+  package-manager shims, job start or any state write.
+- Effective APT enable/interval/installed-archive protection, correct
+  `apt-daily-upgrade.timer` cleanup chain and native completion-stamp metadata.
+  Timer registration, wrapper success and actual autoclean completion are
+  separately reported; missing stamps wait for a native run and custom
+  intervals control stale-stamp warnings.
+
+### Fixed
+
+- Missing/disabled system timers are no longer silently omitted. Cache
+  inventory refuses redirected ancestors rather than examining their targets.
+- Windows packaged/build/download installation routes share policy validation
+  before replacing code; local invalid policy preserves the installed binary
+  and scheduler. Synthetic lifecycle tests make accidental replacement visible.
+- Regression tests cover read-only doctor behavior, structured invalid-policy
+  errors, stale/future/failed reports, native scheduler snapshots and APT stamp
+  and enable/protection semantics. No new runtime dependency or daemon.
+
 ## [0.2.1] - 2026-10-07
 
 ### Fixed

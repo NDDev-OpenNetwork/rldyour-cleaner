@@ -13,6 +13,7 @@ English in code/docs; no host, user, estate paths or private content.
 | runner | one preview/run pipeline and reporting decisions |
 | homecache/{uv,node,inventory} | native locked GC and separate shallow inventory |
 | maintenance | bounded private success/cadence ledger; no file-age eviction |
+| doctor | read-only diagnostic aggregation, actual reports and timestamps |
 | system_policy + os/*_policy | native OS policy observation; explicit root APT policy only on Linux |
 | process | argv-only native commands, deadlines and bounded pipe draining |
 | clean | private per-user run lock; never recursive removal |
@@ -48,6 +49,14 @@ English in code/docs; no host, user, estate paths or private content.
 - Legacy configs/categories/pressure cannot bypass those boundaries.
 - Preview is read-only: it may query tools but never prune, create cache
   content or overwrite last-run state. Show actual effective policy.
+- Doctor is stricter: never invokes GC discovery/shims, starts a job, acquires
+  the run lock or writes state. Scheduler registration/configuration cannot be
+  reported as evidence of completed maintenance. Native snapshots remain OS
+  modules; incomplete/unavailable queries are explicit warnings, not success.
+- APT cleanup belongs to apt-daily-upgrade install mode, not apt-daily update
+  mode. Check effective enable and installed-archive protection; completion
+  stamp metadata and wrapper result are distinct evidence. Never force package
+  updates just to make a diagnostic green.
 - Lock spans a complete actual run. Reports/state stay private; report writes
   are atomic and errors are observable. No backups or historical report copies.
 - Paths crossing symlink/reparse-point components are refused for GC/state.

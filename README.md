@@ -52,7 +52,7 @@ The explicit root command installs exactly
 `APT::Periodic::AutocleanInterval "7"` and `APT::Clean-Installed "false"`.
 Installed-package archives are retained. Its publish is atomic/no-replace;
 matching policy is idempotent, local edits and redirects are refused. It never
-starts GC, updates, reboot or another root daemon. `apt-daily.timer` must remain
+starts GC, updates, reboot or another root daemon. `apt-daily-upgrade.timer` must remain
 active; the report observes its status and the effective APT interval. Native
 `autoclean` retains currently downloadable archives, unlike `apt clean`.
 Normal installers never request sudo or modify system policy. Uninstalling
@@ -108,7 +108,7 @@ assets. Source installs use `cargo build --release --locked`. The installer
 preserves existing policy, validates it, installs the schedule and never starts
 cleanup explicitly. An overdue OS-scheduled job may run after the schedule is
 armed. Windows can also fetch the explicit
-`-Version 0.2.1` release when building from source is unavailable.
+`-Version 0.3.0` release when building from source is unavailable.
 
 | OS | Schedule |
 |---|---|
@@ -128,9 +128,33 @@ rldyour-cleaner scan --json              # projects (if enabled) + native/cache 
 rldyour-cleaner run --dry-run --json     # same evaluation, no GC/report write
 rldyour-cleaner run --json               # supported native GC + atomic report
 rldyour-cleaner status                   # last actual run, including failures
+rldyour-cleaner doctor --json            # read-only end-to-end health checks
 rldyour-cleaner config                   # effective policy, not hardcoded defaults
 rldyour-cleaner config --init            # new annotated policy; refuses overwrite
 ```
+
+`doctor` is a read-only end-to-end check: native user schedule and last job
+result, actual last-run report (72-hour stale/future checks), report version,
+completion ledger, preservation policy and native OS maintenance observations.
+It never calls native GC/discovery, launches Corepack, starts a job, acquires the
+run lock or writes state. JSON contains separate `errors`, `warnings` and checks
+with `ok`/`warning`/`error`/`info`. Exit 0 means no confirmed errors (warnings may
+still exist), exit 1 means diagnostic errors, exit 2 means invalid input/policy;
+invalid policy is also machine-readable under `doctor --json`.
+
+Linux checks the user timer's target/next calendar run and completed service
+result. macOS checks the registered agent/program/calendar trigger and exit
+code. Windows checks the root task, enabled/next-run state, action and native
+last result. Idle oneshots are normal, running/queued jobs do not imply a
+completed result, and unknown native query formats stay warnings. Doctor is
+diagnostic only; it never silently fixes or changes custom schedules.
+
+APT observations separately check effective periodic enable, interval and
+installed-archive protection, the **install-mode** cleanup timer, wrapper job
+result and `autoclean-stamp` metadata. Wrapper success alone cannot prove that
+autoclean ran. A new policy without a completion stamp reports `waiting`; it
+does not force package updates to populate the stamp. Existing stamps older
+than the configured interval plus two days are flagged for review.
 
 `scan -v` remains accepted for compatibility; decisions are always explained.
 Nothing enumerates a user's whole home by default. Cache inventory checks only
