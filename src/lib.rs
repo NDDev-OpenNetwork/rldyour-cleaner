@@ -5,12 +5,14 @@ pub mod cli;
 pub mod config;
 pub mod homecache;
 pub mod kinds;
+pub mod maintenance;
 mod os;
 pub mod process;
 pub mod report;
 pub mod runner;
 pub mod safety;
 pub mod scan;
+pub mod system_policy;
 
 use clap::Parser;
 use cli::{Cli, Cmd};
@@ -29,6 +31,24 @@ pub fn cli_entry() -> i32 {
         }
     };
     match cli.cmd {
+        Cmd::AptAutoclean { enable } => {
+            if !enable {
+                print!("{}", system_policy::APT_AUTOCLEAN_POLICY);
+                return 0;
+            }
+            match system_policy::enable_apt_autoclean() {
+                Ok(()) => {
+                    println!(
+                        "Weekly native APT autoclean configured; apt-daily owns execution and package locking. No immediate cleanup, package removal or restart."
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("APT policy operation failed: {e}");
+                    1
+                }
+            }
+        }
         Cmd::Config { init } => {
             if init {
                 let default_path = cli.config.is_none();

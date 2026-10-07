@@ -20,6 +20,12 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Cmd {
+    /// Preview the weekly obsolete-archive policy; --enable explicitly installs
+    /// it as root on Debian/Ubuntu. Normal user installation never changes APT.
+    AptAutoclean {
+        #[arg(long)]
+        enable: bool,
+    },
     /// Show what would be cleaned and why — never deletes.
     Scan {
         /// Emit machine-readable report instead of the table.

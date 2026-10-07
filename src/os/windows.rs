@@ -45,6 +45,23 @@ pub fn cache_dir() -> PathBuf {
 pub fn data_local_dir() -> PathBuf {
     local()
 }
+pub fn npm_cache_dir() -> PathBuf {
+    local().join("npm-cache")
+}
+pub fn pnpm_cache_paths() -> Vec<PathBuf> {
+    vec![
+        local().join("pnpm/store"),
+        local().join("pnpm-cache"),
+        home_dir().join(".pnpm-store"),
+    ]
+}
+pub fn browser_cache_paths() -> Vec<PathBuf> {
+    vec![
+        local().join("Google/Chrome/User Data/Default/Cache"),
+        local().join("Google/Chrome Beta/User Data/Default/Cache"),
+        local().join("Chromium/User Data/Default/Cache"),
+    ]
+}
 pub fn executable_names(name: &str) -> Vec<String> {
     vec![format!("{name}.exe")]
 }

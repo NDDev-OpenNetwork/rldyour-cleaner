@@ -35,6 +35,7 @@ pub struct Report {
     pub stale_bytes: u64,
     pub entries: Vec<Entry>,
     pub caches: Vec<CacheResult>,
+    pub system_policies: Vec<crate::system_policy::SystemPolicy>,
 }
 impl Report {
     pub fn new(pressure: bool, dry_run: bool, fs_use_pct: Option<u64>) -> Self {
@@ -57,6 +58,7 @@ impl Report {
             stale_bytes: 0,
             entries: Vec::new(),
             caches: Vec::new(),
+            system_policies: Vec::new(),
         }
     }
     pub fn push(&mut self, entry: Entry) {
@@ -64,31 +66,15 @@ impl Report {
         self.entries.push(entry);
     }
     pub fn save(&self, state_dir: &Path) -> std::io::Result<()> {
-        crate::safety::private_dir(state_dir)?;
-        let destination = state_dir.join("last-run.json");
-        crate::safety::plain_path(&destination)?;
-        let temporary = state_dir.join(format!(
-            ".report-{}-{}.tmp",
-            std::process::id(),
-            SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
         let bytes = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
-        write_new_private(&temporary, &bytes)?;
-        let result = fs::rename(&temporary, &destination);
-        if result.is_err() {
-            let _ = fs::remove_file(temporary);
-        }
-        result
+        replace_private(state_dir, "last-run.json", &bytes)
     }
     pub fn print_summary(&self) {
         println!(
             "rldyour-cleaner {}{}: {} native GC pass(es), {} kept/review-only, {} failed ({}ms)",
             self.version,
             if self.dry_run { " (preview)" } else { "" },
-            self.caches
-                .iter()
-                .filter(|c| matches!(c.action, "pruned" | "would-prune"))
-                .count(),
+            self.caches.iter().filter(|c| c.action.is_gc()).count(),
             self.skipped,
             self.failed,
             self.duration_ms
@@ -103,10 +89,35 @@ impl Report {
             );
         }
         for cache in &self.caches {
-            println!("  {}: {} — {}", cache.id, cache.action, cache.detail);
+            println!(
+                "  {}: {} — {}",
+                cache.id,
+                cache.action.label(),
+                cache.detail
+            );
+        }
+        for policy in &self.system_policies {
+            println!("  {}: {} — {}", policy.id, policy.status, policy.detail);
         }
         println!("Reclaimed bytes are reported by the owning tool, not inferred from tree size.");
     }
+}
+
+pub(crate) fn replace_private(state_dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+    crate::safety::private_dir(state_dir)?;
+    let destination = state_dir.join(name);
+    crate::safety::plain_path(&destination)?;
+    let temporary = state_dir.join(format!(
+        ".report-{}-{}.tmp",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    write_new_private(&temporary, bytes)?;
+    let result = fs::rename(&temporary, &destination);
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
 }
 
 pub fn write_new_private(path: &Path, content: &[u8]) -> std::io::Result<()> {

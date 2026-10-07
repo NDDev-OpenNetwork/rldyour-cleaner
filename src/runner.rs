@@ -3,7 +3,9 @@
 use crate::{
     clean::RunLock,
     config::Policy,
-    homecache, os,
+    homecache,
+    maintenance::Ledger,
+    os,
     report::{Entry, Report},
     scan,
 };
@@ -19,6 +21,9 @@ pub fn evaluate(policy: &Policy, dry_run: bool, inspect_projects: bool) -> Resul
         )
     };
     let started = Instant::now();
+    let mut cadence = Ledger::load(&os::state_dir())?;
+    // Refuse redirected report destinations before invoking any native GC.
+    crate::safety::plain_path(&os::state_dir().join("last-run.json")).map_err(|e| e.to_string())?;
     let use_pct = os::pressure_level(&policy.roots);
     let pressure = use_pct.is_some_and(|p| p >= policy.pressure_pct);
     let mut report = Report::new(pressure, dry_run, use_pct);
@@ -41,19 +46,23 @@ pub fn evaluate(policy: &Policy, dry_run: bool, inspect_projects: bool) -> Resul
             });
         }
     }
-    report.caches = homecache::evaluate(policy, dry_run);
+    report.caches = homecache::evaluate(policy, dry_run, &mut cadence);
+    report.system_policies = crate::system_policy::observe(std::time::Duration::from_secs(
+        policy.command_timeout_seconds.min(5),
+    ));
     report.failed += report
         .caches
         .iter()
-        .filter(|c| c.action == "failed")
+        .filter(|c| c.action == homecache::Action::Failed)
         .count();
     report.skipped += report
         .caches
         .iter()
-        .filter(|c| !matches!(c.action, "pruned" | "would-prune" | "failed"))
+        .filter(|c| !c.action.is_gc() && c.action != homecache::Action::Failed)
         .count();
     report.duration_ms = started.elapsed().as_millis() as u64;
     if !dry_run {
+        cadence.save(&os::state_dir()).map_err(|e| e.to_string())?;
         report.save(&os::state_dir()).map_err(|e| e.to_string())?;
     }
     Ok(report)

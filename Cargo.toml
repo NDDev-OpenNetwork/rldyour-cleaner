@@ -1,6 +1,6 @@
 [package]
 name = "rldyour-cleaner"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88" # let-chains in `if`; also the floor for cargo's own GC behavior we rely on
 license = "AGPL-3.0-or-later"
@@ -41,7 +41,7 @@ windows-sys = { version = "0.61", features = [
 filetime = "0.2"
 
 # The tool runs unattended under a systemd timer: small, quiet, and dead on
-# fault rather than half-alive holding a directory rename.
+# fault rather than half-alive holding the per-user run lock.
 [profile.release]
 opt-level = "z"
 lto = "fat"
