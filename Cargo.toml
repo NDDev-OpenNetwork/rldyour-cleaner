@@ -1,10 +1,10 @@
 [package]
 name = "rldyour-cleaner"
-version = "0.0.2"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88" # let-chains in `if`; also the floor for cargo's own GC behavior we rely on
 license = "AGPL-3.0-or-later"
-description = "Policy-driven janitor for stale build artifacts and tool caches"
+description = "Native unused-cache GC with read-only build artifact inventory"
 repository = "https://github.com/NDDev-OpenNetwork/rldyour-cleaner"
 homepage = "https://github.com/NDDev-OpenNetwork/rldyour-cleaner"
 keywords = ["cleaner", "cache", "disk-space", "build-artifacts", "janitor"]
@@ -13,9 +13,8 @@ categories = ["command-line-utilities"]
 # Every dependency earns its place: `clap` is the estate's CLI convention and
 # hand-rolling subcommand parsing buys nothing; `serde`+`toml` give the user an
 # editable policy file; `walkdir` is the standard robust traversal (it also
-# backs cargo-sweep); `fs2` covers the two OS-touchy bits portably — cargo's
-# `.cargo-lock` probing and the disk-pressure check (statvfs on unix,
-# GetDiskFreeSpaceEx on Windows). `serde_json` writes the last-run report the
+# backs cargo-sweep); `fs2` covers private per-user run locking and read-only disk-space
+# statistics portably (statvfs on Unix, GetDiskFreeSpaceEx on Windows). `serde_json` writes the last-run report the
 # `status` command reads back.
 [dependencies]
 clap = { version = "4", features = ["derive"] }

@@ -6,6 +6,33 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-07
+
+### Changed
+
+- Automatic cleanup delegates only to supported native unused-cache GC:
+  uv >=0.12.17 `cache prune`, with explicit validated cache destination,
+  offline mode and native in-use locking. Cargo/Go/Gradle retain their own GC.
+- Removed generic age eviction, version pruning, whole Go module-cache wipes,
+  project-directory deletion and pending-directory reaping. Legacy flags and
+  pressure cannot activate them. Optional artifact discovery is report-only.
+- Removed unsafe process-liveness/rename assumptions, including Windows
+  FILE_SHARE_DELETE and renamed Cargo lock-inode races. Defaults scan no roots.
+- Separated CLI, policy, runner, native adapter, bounded commands and report
+  persistence. Native output is capped at 16 KiB per stream; commands have
+  deadlines and failure never falls back to manual removal.
+- Scan includes cache inventory; scan/dry-run never prune or overwrite status.
+  Effective `config` displays actual settings and rejects unknown keys;
+  legacy misplaced extra-cache keys migrate without enabling deletion.
+- Added private per-user run lock and atomic 0600 reports. Unknown reclaimed
+  bytes remain null, with the native tool's estimate preserved as text.
+- Installers no longer mutate global tmpfiles policy or trigger first-run
+  deletion; releases include matching installers/units. Windows task runs
+  as current user with bounded execution and overlap prevention.
+- Native Linux/macOS ARM+Intel/Windows tests and Clippy, advisory audit,
+  MSRV, cross-target and installer checks; synthetic-only deletion tests.
+
+
 ## [0.0.2] - 2026-09-25
 
 ### Fixed

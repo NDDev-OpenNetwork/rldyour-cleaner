@@ -13,7 +13,7 @@ $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\rldyour-cleaner'
 $ConfigDir = Join-Path $env:LOCALAPPDATA 'rldyour-cleaner'
 $TaskName = 'rldyour-cleaner'
 
-function Say($msg) { Write-Host "==> $msg" -ForegroundStyle Cyan }
+function Say($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
 Say 'Deleting the scheduled task'
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false `

@@ -5,12 +5,10 @@ use std::path::PathBuf;
 #[command(
     name = "rldyour-cleaner",
     version,
-    about = "Reclaim disk space from stale build artifacts and tool caches",
-    long_about = "Scans the configured roots for build/dependency artifacts that are \
-provably stale, deletes them behind six safety guards, and evicts aged entries \
-from tool caches under the user's home. Runs unattended from the OS scheduler \
-(systemd timer, launchd, Task Scheduler); every decision is logged. \
-`scan` never deletes anything."
+    about = "Native unused-cache GC and report-only artifact inventory",
+    long_about = "Runs an owning tool's supported unused-cache GC. Project artifacts, installed \
+versions, trash and custom paths are reported, never age-deleted. scan and \
+run --dry-run do not mutate content or the saved last-run report."
 )]
 pub struct Cli {
     /// Policy file to read (default: the platform config dir — see `config`)
@@ -31,12 +29,15 @@ pub enum Cmd {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Apply the policy: guarded deletion + cache eviction + pending reaper.
+    /// Run supported native GC and report all other locations without deletion.
     /// This is what the OS scheduler calls.
     Run {
         /// Evaluate everything but delete nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Emit the complete report as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Show the last run's report.
     Status,

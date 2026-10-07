@@ -1,178 +1,146 @@
 # rldyour-cleaner
 
-[![CI](https://github.com/NDDev-OpenNetwork/rldyour-cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/NDDev-OpenNetwork/rldyour-cleaner/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/NDDev-OpenNetwork/rldyour-cleaner)](https://github.com/NDDev-OpenNetwork/rldyour-cleaner/releases/latest)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
-[![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-informational)](Cargo.toml)
+A small Rust oneshot that schedules **native unused-cache garbage collection**
+and reports other developer caches. Linux, macOS and Windows use their OS
+scheduler; there is no resident daemon or continuous polling.
 
-A janitor for developer machines: it removes build artifacts and tool caches
-that are **provably stale**, on a schedule, without ever breaking a build or
-app that is currently running.
+Version 0.1 removes the 0.0.x age-based deletion paths. Old timestamps, missing
+open file handles, a `CACHEDIR.TAG`, and a successful directory rename do **not**
+prove that files are unused. This matters for installed tools, virtual
+environments, package stores, build outputs and lazily loaded application data.
 
-Not a daemon — a oneshot tool plus the OS's own scheduler. Cleanup is
-periodic batch work; a sleeping process would only be one more thing to fail.
+## What runs automatically
 
-| OS | Scheduler | Temp dirs | Process liveness probe |
-|---|---|---|---|
-| Linux | `systemd --user` timer (daily) | `tmpfiles.d` override → `/tmp` aged at 7d | `/proc`: exe/cwd/fd/maps per candidate |
-| macOS | launchd agent (daily 03:00) | built-in periodic/`/tmp` cleaner — untouched | `lsof` snapshot per probe |
-| Windows | Task Scheduler (daily 03:00) | Storage Sense is the OS mechanism — untouched | mandatory file locking is the guard (rename/remove of a held tree fails → safe skip) |
+| Area | Decision |
+|---|---|
+| uv >=0.12.17 | `uv cache prune`: the owner identifies dangling/unused entries and coordinates in-use checks through its lock |
+| Cargo >=1.88 | Its built-in automatic GC owns Cargo home; cleaner only reports its presence |
+| Go build cache | Go automatically trims unused entries; cleaner leaves it to Go |
+| Gradle caches | Gradle owns use tracking, retention and cleanup; cleaner leaves it to Gradle |
+| Other package caches, browser runtimes, Devin versions | Kept; reported if present, never partially age-evicted |
+| Project `target`, dependencies, environments, outputs | Optional read-only inventory; never removed by `run` |
+| Custom paths, Trash, pending directories from older cleaner versions | Kept; no inferred deletion authorization |
+| OS temporary files | Stock OS policy; installer never changes `/tmp` retention or runs tmpfiles cleanup |
 
-## Why it can't hurt your builds
+The uv adapter resolves the executable, checks a supported release version,
+asks uv for the actual cache directory and validates the destination against
+`protect` and project roots. The directory must be dedicated, unredirected and
+carry the standard cache marker. GC receives that exact directory explicitly,
+uses offline mode, waits at most five seconds for uv's lock, and has an overall
+command deadline. It never uses `--force`, `--ci`, whole-cache `clean`, or a
+manual deletion fallback. Missing/old tools and protected/unmarked paths skip;
+command failures remain failures in the report.
 
-Every candidate must pass **all** of these before removal:
-
-1. **Age gate** — derived artifacts (`target/`, `build/`, `.next/`,
-   `__pycache__/`, …) must not have been written for `stale_days`
-   (default 14). Dependency trees (`node_modules`, `.venv`, `.dart_tool`) are
-   gated on *project* activity instead (default 30 days): their own mtime
-   only moves on reinstall, so "old" is not "unused" — the project has to be
-   untouched first. Activity is measured on source files (like npkill and
-   cargo-sweep do), never on git history: uncommitted work still counts.
-2. **Freshness floor** — anything written within `guard_fresh_minutes`
-   (default 15) is off-limits, re-checked right before removal.
-3. **Process guard** — no live process may hold the directory (for dep
-   trees: the whole project). The probe is per-OS (`/proc`, `lsof`, or
-   Windows' own locking semantics); if the platform cannot answer at all,
-   the candidate is skipped — this tool fails closed, never open.
-4. **Cargo lock** — for `target/` dirs, `.cargo-lock` must be acquirable
-   exclusively — the same file cargo holds during builds. The lock is kept
-   held *while* the tree is deleted, so a `cargo build` starting in that
-   window simply waits and then creates a fresh `target/`.
-5. **Path guard** — real directories only, never symlinks, never mounts
-   (`st_dev` of the scan root on unix; reparse points count as symlinks on
-   Windows), never paths matching `protect`, and nothing outside the
-   configured `roots`.
-6. **Gitignore gate** — generic names (`build/`, `dist/`, `out/`) must
-   additionally be ignored by git (`git check-ignore`); a tracked `build/`
-   holding source files is not an artifact, however stale it looks.
-
-Deletion is `rename → remove_dir_all`: a process arriving mid-run sees the
-directory *gone* (and recreates it cleanly) rather than half-deleted. Leftover
-`.rldyour-cleaner-pending-*` dirs from a crashed run are reaped by the next.
-
-Disk-pressure mode: when any scan root's filesystem reaches `pressure_pct`
-(default 75%), tighter `[pressure]` ages apply automatically.
-
-## What it cleans
-
-| Area | Detection | Gate |
-|---|---|---|
-| `target/` (Rust) | sibling `Cargo.toml`, or `CACHEDIR.TAG` inside | artifact mtime |
-| `target/*/incremental` | inside a surviving target | own mtime (shorter) |
-| `node_modules/` | sibling `package.json` | project activity |
-| `.next .nuxt .output .svelte-kit .turbo .parcel-cache .vite .astro coverage` | sibling `package.json` | artifact mtime |
-| `dist/`, `out/` | sibling `package.json` **and** git-ignored | artifact mtime |
-| `build/` | sibling `pubspec.yaml` / `*.gradle*` / `package.json` **and** git-ignored | artifact mtime |
-| `.dart_tool` | sibling `pubspec.yaml` | project activity; `flutter_build` inside live ones gets its own gate |
-| `.gradle` | gradle markers | artifact mtime |
-| `.venv`, `venv`, `.tox`, `.nox` | python markers | project activity |
-| `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.hypothesis` | anywhere | artifact mtime |
-| tool caches | uv, go-build, bun, npm `_cacache`, pub, gradle, pip, pre-commit, playwright, puppeteer, codex-runtimes, pnpm store — at each OS's conventional location | per-entry age; skipped while any process uses the cache; `uv` delegates to its own GC |
-| `go/pkg/mod` | go's read-only module cache | `go clean -modcache`, **pressure runs only** — it wipes everything |
-| devin CLI versions | `_versions` under the devin data dir | keep `current`, drop old |
-
-Explicitly **not** touched: `~/.cargo/registry` (cargo ≥ 1.88 GCs it itself),
-`~/.android/avd`, toolchains, `.git` contents, Trash/Recycle Bin (opt-in and
-unix-only), and anything matching `protect`. Temp directories are delegated
-to each OS's own mechanism rather than reinvented.
+A private run lock serializes scheduled/manual cleaner runs. Output is drained
+continuously but retained only up to 16 KiB per stream. Reports replace one
+private `last-run.json` atomically (0700 directory / 0600 Unix file), without
+archives or backups. Cache tree sizes and free-space deltas are not claimed as
+reclaimed bytes; uv's own estimate is retained as text and numeric reclamation
+is `null` when unknown. A dry run does not call pruning or write run state.
 
 ## Install
 
+Choose the release for your platform and architecture, verify its `.sha256`,
+extract, then run the included installer:
+
 ```sh
-./install.sh       # Linux: systemd --user timer · macOS: launchd agent
-.\install.ps1      # Windows: Task Scheduler task
+./install.sh        # Linux/macOS; no sudo
 ```
 
-With `cargo` on PATH the installer builds from source; without it (or with
-`RLDYOUR_CLEANER_USE_RELEASE=1`) it downloads the latest release archive
-and verifies its `.sha256` before installing — no Rust toolchain needed.
+```powershell
+.\install.ps1       # Windows, current user
+```
 
-Everything lands under the user's home/profile; the only privileged step is
-Linux's optional `/etc/tmpfiles.d/tmp.conf` drop-in (skipped with a printed
-recipe if sudo is unavailable). `uninstall.sh` / `uninstall.ps1` reverse it.
+Release archives contain the executable, matching installers and scheduler
+assets. Source installs use `cargo build --release --locked`. The installer
+preserves existing policy, validates it, installs the schedule and never starts
+cleanup explicitly. An overdue OS-scheduled job may run after the schedule is
+armed. Windows can also fetch the explicit
+`-Version 0.1.0` release when building from source is unavailable.
+
+| OS | Schedule |
+|---|---|
+| Linux | daily systemd user timer, persistent catch-up, randomized delay; idle CPU/I/O priority |
+| macOS | daily 03:00 launchd user agent; background CPU/I/O priority |
+| Windows | daily 03:00 current-user task, missed-run catch-up, IgnoreNew instances, five-minute deadline |
+
+`uninstall.sh`/`uninstall.ps1` remove code and the schedule, preserving policy and
+last-run state. They do not edit global temporary-file policy. If an old 0.0.x
+installer installed a `/tmp` override, review it separately; this installer
+does not overwrite or remove another component's system configuration.
 
 ## Commands
 
 ```sh
-rldyour-cleaner scan            # table of stale candidates — never deletes
-rldyour-cleaner scan -v         # include skipped entries with reasons
-rldyour-cleaner scan --json     # machine-readable
-rldyour-cleaner run --dry-run   # full evaluation, no mutation
-rldyour-cleaner run             # what the scheduler calls
-rldyour-cleaner status          # last run's JSON report
-rldyour-cleaner config          # effective policy; --init writes the file
+rldyour-cleaner scan --json              # projects (if enabled) + native/cache inventory
+rldyour-cleaner run --dry-run --json     # same evaluation, no GC/report write
+rldyour-cleaner run --json               # supported native GC + atomic report
+rldyour-cleaner status                   # last actual run, including failures
+rldyour-cleaner config                   # effective policy, not hardcoded defaults
+rldyour-cleaner config --init            # new annotated policy; refuses overwrite
 ```
+
+`scan -v` remains accepted for compatibility; decisions are always explained.
+Nothing enumerates a user's whole home by default. Cache inventory checks only
+specific locations and does not compute a recursive cache size.
 
 ## Policy
 
-`config.toml` under the platform config dir — Linux
-`~/.config/rldyour-cleaner/`, macOS `~/Library/Application Support/`,
-Windows `%LOCALAPPDATA%\` — every key optional; the shipped default file
-documents them all. Highlights:
+| Platform | Config and state |
+|---|---|
+| Linux/BSD | `$XDG_CONFIG_HOME/rldyour-cleaner/config.toml`, `$XDG_STATE_HOME/rldyour-cleaner/last-run.json` (usual ~/.config / ~/.local/state fallbacks) |
+| macOS | `~/Library/Application Support/rldyour-cleaner/` |
+| Windows | `%LOCALAPPDATA%\rldyour-cleaner\` |
 
 ```toml
-roots = ["~/Developer"]
-stale_days = 14          # derived artifacts
-dep_stale_days = 30      # dependency dirs (project-activity gate)
-incremental_days = 7     # target/*/incremental
-cache_entry_days = 30    # files inside tool caches
-guard_fresh_minutes = 15
-pressure_pct = 75        # >100 disables pressure mode entirely
-protect = []             # path substrings never deleted
-extra_cache_paths = []   # extra dirs evicted like tool caches
+roots = []
+protect = []
+extra_cache_paths = []       # inventory only
+command_timeout_seconds = 60 # 1..300; each discovery command is capped at 5s
+pressure_pct = 101
+
+[categories]
+projects = false            # optional stale-artifact inventory under roots
+incremental = true
+home_caches = true
+devin_versions = false
+cargo_registry = false
+trash = false
 ```
 
-## Repository layout
+All legacy age and pressure fields still parse, but **no setting re-enables
+age-based deletion**. Age fields only affect optional project inventory.
+Unknown/mistyped keys fail instead of silently activating defaults. The old
+mistakenly nested `[categories].extra_cache_paths` key migrates to the top-level
+inventory. An old config with `projects=true`, `trash=true` or pressure enabled
+cannot turn on project/trash deletion. To disable native GC, set
+`categories.home_caches=false`.
 
-```
-src/
-  kinds.rs     artifact taxonomy: names + sibling markers → kind
-  scan.rs      root walker, age gates, measurement, sub-candidates
-  safety.rs    the guards + the held-lock `Prepared`
-  clean.rs     rename→remove executor + pending-dir reaper
-  homecache.rs tool caches: age-evict or delegate to the tool's own GC
-  config.rs    TOML policy, balanced defaults
-  report.rs    JSON run report for `status`
-  os/          everything OS-specific, one file per platform:
-    mod.rs       dirs/paths, PATH lookup, fs fill, device & size helpers
-    linux.rs     /proc liveness probe
-    unix_lsof.rs lsof liveness probe (macOS, BSDs)
-    windows.rs   locking-semantics guard (probe = the delete itself)
-platforms/
-  linux/       systemd units + tmpfiles.d override
-  macos/       launchd plist (@HOME@ substituted at install)
-install.ps1 / uninstall.ps1   Windows — registers a Task Scheduler task
-```
+`protect` matches path substrings, with leading `~` expanded. Project roots are
+also excluded from native cache mutation. Paths with symlink/reparse-point
+components are refused for GC and state writes; explicitly redirected caches
+remain the owning tool's responsibility. Read-only project discovery never
+follows symlinks or crosses filesystem boundaries; unknown mtimes are treated
+as warm, not stale.
 
-## Verify / develop
+## Development
 
 ```sh
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+cargo audit
 shellcheck install.sh uninstall.sh
-actionlint                                     # workflow semantics
-systemd-analyze verify platforms/linux/systemd/*   # on Linux
+actionlint
 ```
 
-`rust-toolchain.toml` pins stable + rustfmt/clippy for everyone; MSRV is
-`rust-version` in `Cargo.toml` and is exercised in CI against 1.88.0.
+The development toolchain is pinned; MSRV is Rust 1.88. CI runs native tests and
+Clippy on Linux, macOS ARM/Intel and Windows, MSRV and all release-target checks.
+Integration tests use synthetic caches/private homes, including a test-only
+native-tool executable. They verify previews, busy-cache failures, protected
+paths, legacy configs, no deletion fallback, run locks, report permissions,
+bounded output and timeouts. [Quality notes](docs/quality.md) record the primary
+sources and practical limitations. No liveness snapshot can prove future
+non-use, so none is used as deletion authorization.
 
-## CI / release
-
-CI lints (fmt, clippy, shellcheck, actionlint, plist + systemd-unit
-verification), runs the tests on ubuntu/macos/windows, and `cargo check`s
-every release target so cross-compile bugs surface in the PR, not at tag
-time.
-
-A `v*` tag publishes binaries — the release stays a **draft** until all
-legs upload, so a failed build never ships a partial release. The tag must
-equal `version` in `Cargo.toml`.
-
-```sh
-git tag -s v0.0.2 -m v0.0.2 && git push --tags
-```
-
-Assets: `linux-x86_64`, `linux-aarch64`, `macos-aarch64`, `macos-x86_64`,
-`windows-x86_64`, each with a `.sha256` checksum.
+AGPL-3.0-or-later.

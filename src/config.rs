@@ -1,11 +1,11 @@
 //! User-editable policy. Parsed from `config.toml` under the platform config
 //! dir (`os::config_dir`); every field has a default so a missing file means
-//! "balanced defaults".
+//! "native-GC defaults".
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// How a candidate earns (or loses) the right to be deleted.
+/// Age criteria used only for optional read-only artifact inventory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gate {
     /// The artifact's own newest mtime must be older than `stale_days`.
@@ -19,7 +19,7 @@ pub enum Gate {
     ProjectStale,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Policy {
     pub roots: Vec<PathBuf>,
     pub protect: Vec<String>,
@@ -33,9 +33,10 @@ pub struct Policy {
     pub categories: Categories,
     pub min_size_bytes: u64,
     pub extra_cache_paths: Vec<PathBuf>,
+    pub command_timeout_seconds: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Pressure {
     pub stale_days: u64,
     pub dep_stale_days: u64,
@@ -43,7 +44,7 @@ pub struct Pressure {
     pub cache_entry_days: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Categories {
     /// Build/artifact directories found under `roots`.
     pub projects: bool,
@@ -52,10 +53,10 @@ pub struct Categories {
     /// Tool caches under the user's home (`~/.cache/*`, `~/.bun`, ...).
     pub home_caches: bool,
     /// Old `devin/cli/_versions/*` under the platform devin data dir,
-    /// except `current`.
+    /// report-only; no version is removed.
     pub devin_versions: bool,
     /// `~/.cargo/registry` — off: cargo's built-in gc owns it (stable since
-    /// Rust 1.88). Enable only on toolchains older than that.
+    /// Rust 1.88). This flag adds visibility, not a deletion capability.
     pub cargo_registry: bool,
     /// The platform trash dir (`~/.local/share/Trash`, `~/.Trash`) — off:
     /// deleted files are user data, not cache.
@@ -63,7 +64,7 @@ pub struct Categories {
 }
 
 #[derive(Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct FilePolicy {
     roots: Vec<String>,
     protect: Vec<String>,
@@ -77,10 +78,11 @@ struct FilePolicy {
     categories: FileCategories,
     min_size_bytes: u64,
     extra_cache_paths: Vec<String>,
+    command_timeout_seconds: u64,
 }
 
 #[derive(Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct FilePressure {
     stale_days: u64,
     dep_stale_days: u64,
@@ -89,7 +91,7 @@ struct FilePressure {
 }
 
 #[derive(Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct FileCategories {
     projects: bool,
     incremental: bool,
@@ -97,23 +99,27 @@ struct FileCategories {
     devin_versions: bool,
     cargo_registry: bool,
     trash: bool,
+    // 0.0.x generated this key under [categories] by mistake. Accept and
+    // migrate it into the top-level report-only list; never delete it.
+    extra_cache_paths: Vec<String>,
 }
 
 impl Default for FilePolicy {
     fn default() -> Self {
         Self {
-            roots: vec!["~/Developer".into()],
+            roots: Vec::new(),
             protect: Vec::new(),
             stale_days: 14,
             dep_stale_days: 30,
             incremental_days: 7,
             cache_entry_days: 30,
             guard_fresh_minutes: 15,
-            pressure_pct: 75,
+            pressure_pct: 101,
             pressure: FilePressure::default(),
             categories: FileCategories::default(),
             min_size_bytes: 0,
             extra_cache_paths: Vec::new(),
+            command_timeout_seconds: 60,
         }
     }
 }
@@ -132,12 +138,13 @@ impl Default for FilePressure {
 impl Default for FileCategories {
     fn default() -> Self {
         Self {
-            projects: true,
+            projects: false,
             incremental: true,
             home_caches: true,
-            devin_versions: true,
+            devin_versions: false,
             cargo_registry: false,
             trash: false,
+            extra_cache_paths: Vec::new(),
         }
     }
 }
@@ -217,18 +224,7 @@ pub fn load(path: Option<&Path>) -> Result<Policy, String> {
     let parsed: FilePolicy =
         toml::from_str(&file).map_err(|e| format!("cannot parse {}: {e}", path.display()))?;
     let policy = policy_from(parsed);
-    // The filesystem root is never a legitimate scan root; refuse it outright
-    // rather than trust marker files to keep a whole-disk walk harmless.
-    if policy
-        .roots
-        .iter()
-        .any(|r| r.canonicalize().is_ok_and(|c| c == Path::new("/")))
-    {
-        return Err(format!(
-            "{}: '/' is not an allowed scan root",
-            path.display()
-        ));
-    }
+    validate(&policy).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(policy)
 }
 
@@ -272,35 +268,64 @@ fn policy_from(f: FilePolicy) -> Policy {
             trash: f.categories.trash,
         },
         min_size_bytes: f.min_size_bytes,
-        extra_cache_paths: f.extra_cache_paths.iter().map(|p| expand_home(p)).collect(),
+        extra_cache_paths: f
+            .extra_cache_paths
+            .iter()
+            .chain(f.categories.extra_cache_paths.iter())
+            .map(|p| expand_home(p))
+            .collect(),
+        command_timeout_seconds: f.command_timeout_seconds,
     }
 }
 
 /// The default file, written by `install.sh` (and `config --init`) so users
 /// see every knob with its meaning next to it.
-pub const DEFAULT_CONFIG: &str = r#"# rldyour-cleaner policy — every field is optional and defaults to the
-# "balanced" profile below. Days are since last write/use; nothing is ever
-# deleted while a process holds it open or wrote it recently.
+pub fn validate(policy: &Policy) -> Result<(), String> {
+    if !(1..=300).contains(&policy.command_timeout_seconds) {
+        return Err("command_timeout_seconds must be 1..=300".into());
+    }
+    for days in [
+        policy.stale_days,
+        policy.dep_stale_days,
+        policy.incremental_days,
+        policy.cache_entry_days,
+        policy.pressure.stale_days,
+        policy.pressure.dep_stale_days,
+        policy.pressure.incremental_days,
+        policy.pressure.cache_entry_days,
+    ] {
+        if days > 36_500 {
+            return Err("age thresholds must be <=36500 days".into());
+        }
+    }
+    if policy.guard_fresh_minutes > 525_600 {
+        return Err("guard_fresh_minutes must be <=525600".into());
+    }
+    for root in policy.roots.iter().chain(&policy.extra_cache_paths) {
+        if !root.is_absolute()
+            || root.parent().is_none()
+            || root
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(format!("invalid scan root: {}", root.display()));
+        }
+    }
+    Ok(())
+}
 
-# Directories scanned for project build artifacts (target/, node_modules/, ...).
-roots = ["~/Developer"]
-
-# Extra path substrings that must never be deleted (matched against the
-# canonical candidate path; a leading ~ expands like in `roots`).
-# Example: protect = ["~/Developer/client-abonmarket-frontend"]
+pub const DEFAULT_CONFIG: &str = r#"# Only native unused-cache GC mutates content. Age-based project discovery
+# is optional and report-only; legacy destructive category flags never delete.
+roots = []
 protect = []
-
-# --- routine thresholds (days) ---
-stale_days = 14          # derived artifacts: target, build/, .next, __pycache__, ...
-dep_stale_days = 30      # dependency dirs: node_modules, .venv, .dart_tool, ...
-incremental_days = 7     # target/*/incremental inside active projects
-cache_entry_days = 30    # entries inside ~/.cache/* tool caches
-guard_fresh_minutes = 15 # never touch anything written this recently
-
-# --- disk pressure ---
-# When the filesystem holding any root is this full, the [pressure] ages apply
-# instead. Set to 101 to disable pressure mode entirely.
-pressure_pct = 75
+extra_cache_paths = []   # inventory only, never age-evicted
+command_timeout_seconds = 60
+stale_days = 14
+dep_stale_days = 30
+incremental_days = 7
+cache_entry_days = 30    # compatibility field; no manual age eviction
+guard_fresh_minutes = 15
+pressure_pct = 101      # pressure is reported; never enables destructive GC
 
 [pressure]
 stale_days = 7
@@ -309,15 +334,12 @@ incremental_days = 3
 cache_entry_days = 14
 
 [categories]
-projects = true        # artifact dirs under `roots`
-incremental = true     # prune stale incremental caches inside live target dirs
-home_caches = true     # uv, go, bun, npm, pub, gradle, playwright, ...
-devin_versions = true  # old devin CLI versions under ~/.local/share/devin
-cargo_registry = false # cargo >=1.88 garbage-collects ~/.cargo itself
-trash = false          # ~/.local/share/Trash is user data, opt in deliberately
-
-# Extra directories treated like `home_caches` entries (age-evicted by files).
-extra_cache_paths = []
+projects = false        # opt-in report of stale artifacts under roots
+incremental = true      # report nested incremental candidates
+home_caches = true      # native uv prune; inventory other caches
+devin_versions = false # report only; installed versions are not cache
+cargo_registry = false # report only; Cargo >=1.88 owns its cache GC
+trash = false           # report only; never empty user trash
 "#;
 
 #[cfg(test)]
@@ -325,7 +347,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_the_balanced_profile() {
+    fn defaults_are_native_gc_only() {
         // Point at a path that cannot exist: the user's real config file must
         // not leak into tests.
         let p = load(Some(Path::new("/nonexistent-rldc-dir/config.toml"))).unwrap();
@@ -333,8 +355,9 @@ mod tests {
         assert_eq!(p.dep_stale_days, 30);
         assert_eq!(p.incremental_days, 7);
         assert_eq!(p.cache_entry_days, 30);
-        assert_eq!(p.pressure_pct, 75);
-        assert!(p.categories.projects);
+        assert_eq!(p.pressure_pct, 101);
+        assert!(!p.categories.projects);
+        assert!(p.roots.is_empty());
         assert!(!p.categories.trash);
         assert!(!p.categories.cargo_registry);
         let routine = p.ages(false);
@@ -360,6 +383,35 @@ mod tests {
             crate::os::home_dir().join("keep-this").to_string_lossy()
         );
         assert_eq!(p.protect[1], "literal-sub");
+    }
+
+    #[test]
+    fn generated_policy_roundtrips_and_legacy_nested_paths_migrate() {
+        let file: FilePolicy = toml::from_str(DEFAULT_CONFIG).unwrap();
+        let policy = policy_from(file);
+        let rendered = toml::to_string_pretty(&policy).unwrap();
+        let decoded: FilePolicy = toml::from_str(&rendered).unwrap();
+        assert!(!decoded.categories.projects);
+        let legacy: FilePolicy =
+            toml::from_str("[categories]\nextra_cache_paths = [\"~/known-cache\"]").unwrap();
+        assert_eq!(
+            policy_from(legacy).extra_cache_paths,
+            vec![expand_home("~/known-cache")]
+        );
+    }
+
+    #[test]
+    fn typos_extreme_ages_and_root_traversal_fail_closed() {
+        assert!(toml::from_str::<FilePolicy>("[categories]\nhome_cache = true").is_err());
+        for text in [
+            "stale_days = 999999999",
+            "command_timeout_seconds = 0",
+            "roots = [\"/\"]",
+            "roots = [\"/tmp/../\"]",
+        ] {
+            let file: FilePolicy = toml::from_str(text).unwrap();
+            assert!(validate(&policy_from(file)).is_err(), "{text}");
+        }
     }
 
     #[test]

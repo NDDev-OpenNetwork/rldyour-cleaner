@@ -70,7 +70,12 @@ const ACTIVITY_SKIP: &[&str] = &[
 pub fn measure(dir: &Path) -> (u64, Option<SystemTime>) {
     let mut size = 0u64;
     let mut newest: Option<SystemTime> = None;
-    for e in WalkDir::new(dir).follow_links(false).into_iter().flatten() {
+    for e in WalkDir::new(dir)
+        .follow_links(false)
+        .same_file_system(true)
+        .into_iter()
+        .flatten()
+    {
         let Ok(md) = fs::symlink_metadata(e.path()) else {
             continue;
         };
@@ -89,12 +94,13 @@ pub fn measure(dir: &Path) -> (u64, Option<SystemTime>) {
 pub fn any_newer_than(dir: &Path, cutoff: SystemTime) -> bool {
     WalkDir::new(dir)
         .follow_links(false)
+        .same_file_system(true)
         .into_iter()
-        .flatten()
-        .any(|e| {
-            fs::symlink_metadata(e.path())
+        .any(|e| match e {
+            Ok(e) => fs::symlink_metadata(e.path())
                 .and_then(|m| m.modified())
-                .is_ok_and(|m| m > cutoff)
+                .map_or(true, |m| m > cutoff),
+            Err(_) => true,
         })
 }
 
@@ -119,6 +125,7 @@ fn project_active_within(root: &Path, cutoff: SystemTime) -> bool {
     }
     WalkDir::new(root)
         .follow_links(false)
+        .same_file_system(true)
         .into_iter()
         .filter_entry(|e| {
             !(e.file_type().is_dir()
@@ -127,16 +134,18 @@ fn project_active_within(root: &Path, cutoff: SystemTime) -> bool {
                     .to_str()
                     .is_some_and(|n| ACTIVITY_SKIP.contains(&n)))
         })
-        .flatten()
-        .any(|e| {
-            fs::symlink_metadata(e.path())
+        .any(|e| match e {
+            Ok(e) => fs::symlink_metadata(e.path())
                 .and_then(|m| m.modified())
-                .is_ok_and(|m| m > cutoff)
+                .map_or(true, |m| m > cutoff),
+            Err(_) => true,
         })
 }
 
 fn cutoff(days: u64) -> SystemTime {
-    SystemTime::now() - Duration::from_secs(days.saturating_mul(86_400))
+    SystemTime::now()
+        .checked_sub(Duration::from_secs(days.saturating_mul(86_400)))
+        .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 
 /// Is `dir` ignored by the project's git? For generically-named dirs this is
@@ -220,7 +229,11 @@ pub fn scan(policy: &Policy, ages: Ages) -> ScanOutcome {
     }
 
     for root in &policy.roots {
-        if !root.is_dir() {
+        if !root.is_dir()
+            || root
+                .symlink_metadata()
+                .is_ok_and(|m| crate::safety::is_redirect(&m))
+        {
             continue;
         }
         let root_dev = crate::os::device_id(root);
@@ -229,14 +242,25 @@ pub fn scan(policy: &Policy, ages: Ages) -> ScanOutcome {
         // Manual iteration (cargo-sweep style): `skip_current_dir` yields a
         // matched dir yet never descends into it — filter_entry would hide it
         // from us entirely, which is exactly wrong for artifact dirs.
-        let mut iter = WalkDir::new(root).follow_links(false).into_iter();
+        let mut iter = WalkDir::new(root)
+            .follow_links(false)
+            .same_file_system(true)
+            .into_iter();
         while let Some(entry) = iter.next() {
             let Ok(entry) = entry else { continue };
             if entry.depth() == 0 || !entry.file_type().is_dir() {
                 continue;
             }
+            if policy
+                .protect
+                .iter()
+                .any(|p| !p.is_empty() && entry.path().to_string_lossy().contains(p))
+            {
+                iter.skip_current_dir();
+                continue;
+            }
             let name = entry.file_name().to_str().unwrap_or("");
-            if name.starts_with(crate::clean::PENDING_PREFIX)
+            if name.starts_with(".rldyour-cleaner-pending")
                 || crate::os::device_id(entry.path()) != root_dev
             {
                 iter.skip_current_dir();
