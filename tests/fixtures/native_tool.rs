@@ -7,6 +7,16 @@ fn main() {
         io::stdout().write_all(&data).unwrap();
         io::stderr().write_all(&data).unwrap(); return;
     }
+    if args.first().is_some_and(|s|s=="heartbeat") {
+        let path=PathBuf::from(&args[1]);let mut n=0;
+        loop {fs::write(&path,n.to_string()).unwrap();n+=1;std::thread::sleep(Duration::from_millis(10));}
+    }
+    if args.first().is_some_and(|s|s=="descendants"||s=="exit-with-descendant") {
+        let _child=std::process::Command::new(env::current_exe().unwrap()).arg("heartbeat").arg(&args[1]).spawn().unwrap();
+        for _ in 0..200 {if PathBuf::from(&args[1]).exists(){break;}std::thread::sleep(Duration::from_millis(5));}
+        println!("spawned synthetic descendant");
+        if args[0]=="descendants" {std::thread::sleep(Duration::from_secs(30));}return;
+    }
     if args.first().is_some_and(|s| s=="sleep") { std::thread::sleep(Duration::from_secs(30));return; }
     if args==["--version"] { println!("uv {}",env::var("FIXTURE_UV_VERSION").unwrap_or_else(|_|"0.12.17".into())); return; }
     if args.get(0).is_some_and(|s|s=="cache") && args.get(1).is_some_and(|s|s=="dir") {

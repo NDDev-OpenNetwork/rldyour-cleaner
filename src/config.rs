@@ -214,7 +214,24 @@ pub fn config_path() -> PathBuf {
 /// mistyped policy is how deletions surprise people.
 pub fn load(path: Option<&Path>) -> Result<Policy, String> {
     let path = path.map(PathBuf::from).unwrap_or_else(config_path);
-    let file = match std::fs::read_to_string(&path) {
+    const LIMIT: u64 = 256 * 1024;
+    match std::fs::symlink_metadata(&path) {
+        Ok(md) if !md.is_file() || md.len() > LIMIT => {
+            return Err("policy must be a regular file <=256 KiB".into());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Policy::default()),
+        Err(e) => return Err(e.to_string()),
+        _ => {}
+    }
+    use std::io::Read;
+    let file = match std::fs::File::open(&path).and_then(|file| {
+        let mut text = String::new();
+        file.take(LIMIT + 1).read_to_string(&mut text)?;
+        if text.len() as u64 > LIMIT {
+            return Err(std::io::Error::other("policy exceeds 256 KiB"));
+        }
+        Ok(text)
+    }) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Policy::default());

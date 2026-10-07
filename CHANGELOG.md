@@ -6,6 +6,36 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-07
+
+### Fixed
+
+- Command deadlines include pipe draining. POSIX process groups and Windows
+  kill-on-close Job Objects stop owned descendants after timeout or early
+  parent exit; reader pipes are polled without an unbounded blocking join.
+  Windows children join the job while suspended, using documented stable APIs.
+- Explicit custom-config creation no longer changes existing parent directory
+  permissions. Policies must be regular files <=256 KiB; unreadable cache
+  metadata is reported as failure rather than absence.
+- Linux ignores relative XDG paths per the base-directory specification and
+  installs user units in the correct XDG config directory. Home lookup no
+  longer falls back to the filesystem root. Windows resolves native EXEs only.
+- macOS plist paths escape XML and shell replacement syntax independently.
+  Unix and Windows installers validate policy and do not trigger cache GC.
+
+### Structure and validation
+
+- Separate Linux, macOS and Windows Rust modules behind one compile-time
+  platform facade; shared POSIX mechanisms remain in a Unix helper. Cleanup
+  policy, runner and reports contain no per-platform branches.
+- Separate platform install/uninstall implementations and common Unix code
+  staging; compatibility entrypoints remain at the distribution root.
+- Added descendant/inherited-output regression, oversized-policy, parent-mode
+  preservation, relative-XDG and synthetic installer lifecycle tests. Native
+  CI covers all three OSes and both Mac architectures, with mocked schedulers
+  so installer tests never register jobs or run actual cache cleanup.
+
+
 ## [0.1.0] - 2026-10-07
 
 ### Changed

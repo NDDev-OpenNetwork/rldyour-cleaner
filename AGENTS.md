@@ -17,8 +17,11 @@ English in code/docs; no host, user, estate paths or private content.
 | safety | nonredirected dedicated paths, cache marker and protected roots |
 | scan / kinds | optional read-only artifact discovery; age is advisory |
 | report | atomic private last-run replacement; no archive backups |
-| os | platform conventions and read-only disk stats |
-| platforms | OS-native schedules; no global /tmp override |
+| os/mod | compile-time facade + shared environment/disk helpers |
+| os/linux, os/macos, os/windows | platform path, process/pipe, file contracts |
+| os/unix | POSIX primitives shared by Linux/macOS |
+| platforms/{linux,macos,windows} | independent installer/uninstaller + scheduler assets |
+| platforms/common | common Unix code staging; no global /tmp override |
 
 ## Invariants
 
@@ -35,7 +38,8 @@ English in code/docs; no host, user, estate paths or private content.
   are atomic and errors are observable. No backups or historical report copies.
 - Paths crossing symlink/reparse-point components are refused for GC/state.
   Native GC is pinned to the exact discovered and validated destination.
-- Tool output/latency are bounded. Run only argv, never a shell. Keep runtime
+- Tool output/latency are bounded. Run only argv, never a shell. Deadlines include readers and owned process trees; Windows spawns suspended
+  into a private Job Object before resume. Keep runtime
   dependencies minimal and justified. Never inspect credentials or real user
   data to test; all mutation tests use synthetic cache/private-home fixtures.
 - Installer never triggers cleanup, uses no sudo and never changes global
@@ -45,9 +49,10 @@ English in code/docs; no host, user, estate paths or private content.
 
 cargo fmt --check; cargo test --locked;
 cargo clippy --locked --all-targets -- -D warnings; cargo audit;
-shellcheck install.sh uninstall.sh; actionlint.
+shellcheck -x install.sh uninstall.sh platforms/*/*.sh scripts/*.sh; actionlint.
 
 CI performs native tests/Clippy on Linux, macOS ARM/Intel and Windows, MSRV
-1.88, cross-target checks, PowerShell/plist/unit checks. Release binaries,
+1.88, cross-target checks, PowerShell/plist/unit checks and synthetic installer
+lifecycles (mock schedulers; never create real CI jobs). Release binaries,
 matching installers and SHA256 manifests are published only after all five
 platform builds succeed. Signed tag must match Cargo/changelog versions.

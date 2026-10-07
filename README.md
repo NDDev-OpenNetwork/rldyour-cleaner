@@ -27,7 +27,10 @@ asks uv for the actual cache directory and validates the destination against
 `protect` and project roots. The directory must be dedicated, unredirected and
 carry the standard cache marker. GC receives that exact directory explicitly,
 uses offline mode, waits at most five seconds for uv's lock, and has an overall
-command deadline. It never uses `--force`, `--ci`, whole-cache `clean`, or a
+command deadline that also covers output draining. Native commands own a
+POSIX process group (Linux/macOS) or Windows Job Object; descendant processes
+cannot hold the output streams open indefinitely. Windows starts suspended,
+assigns the job and then resumes via documented Win32 APIs. It never uses `--force`, `--ci`, whole-cache `clean`, or a
 manual deletion fallback. Missing/old tools and protected/unmarked paths skip;
 command failures remain failures in the report.
 
@@ -56,7 +59,7 @@ assets. Source installs use `cargo build --release --locked`. The installer
 preserves existing policy, validates it, installs the schedule and never starts
 cleanup explicitly. An overdue OS-scheduled job may run after the schedule is
 armed. Windows can also fetch the explicit
-`-Version 0.1.0` release when building from source is unavailable.
+`-Version 0.1.1` release when building from source is unavailable.
 
 | OS | Schedule |
 |---|---|
@@ -110,7 +113,7 @@ trash = false
 
 All legacy age and pressure fields still parse, but **no setting re-enables
 age-based deletion**. Age fields only affect optional project inventory.
-Unknown/mistyped keys fail instead of silently activating defaults. The old
+Policies are regular files capped at 256 KiB. Unknown/mistyped keys fail instead of silently activating defaults. The old
 mistakenly nested `[categories].extra_cache_paths` key migrates to the top-level
 inventory. An old config with `projects=true`, `trash=true` or pressure enabled
 cannot turn on project/trash deletion. To disable native GC, set
@@ -133,6 +136,13 @@ cargo audit
 shellcheck install.sh uninstall.sh
 actionlint
 ```
+
+The platform layer is split into `os/linux.rs`, `os/macos.rs` and
+`os/windows.rs`, selected at compile time by `os/mod.rs`; `os/unix.rs` shares
+POSIX primitives. Native schedules and installer implementations live in
+`platforms/linux`, `platforms/macos`, `platforms/windows`, with common Unix code
+staging in `platforms/common`. The CLI, policy, cache adapter, runner and report
+pipeline are shared across the three systems.
 
 The development toolchain is pinned; MSRV is Rust 1.88. CI runs native tests and
 Clippy on Linux, macOS ARM/Intel and Windows, MSRV and all release-target checks.

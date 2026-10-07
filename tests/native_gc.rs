@@ -300,3 +300,93 @@ fn effective_config_reflects_custom_values_and_initialization_refuses_overwrite(
         .unwrap();
     assert!(!output.status.success());
 }
+
+#[test]
+fn inherited_output_and_descendants_cannot_outlive_the_owned_command_tree() {
+    for mode in ["descendants", "exit-with-descendant"] {
+        let f = Fixture::new();
+        let marker = f.0.join("heartbeat");
+        let start = Instant::now();
+        let outcome = process::run(
+            Command::new(tool()).arg(mode).arg(&marker),
+            Duration::from_secs(2),
+        );
+        if mode == "descendants" {
+            assert!(outcome.is_err());
+        } else {
+            assert!(outcome.unwrap().stdout.contains("spawned synthetic"));
+        }
+        assert!(start.elapsed() < Duration::from_secs(5));
+        assert!(marker.exists());
+        std::thread::sleep(Duration::from_millis(100));
+        let stopped = fs::read(&marker).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(
+            stopped,
+            fs::read(&marker).unwrap(),
+            "descendant survived {mode}"
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn relative_xdg_environment_values_use_absolute_platform_defaults() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    let report = json(
+        f.cli(&cache, "")
+            .env("XDG_STATE_HOME", "relative-state")
+            .env("XDG_CACHE_HOME", "relative-cache")
+            .args(["run", "--json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(report["caches"][0]["action"], "pruned");
+    assert!(
+        f.0.join(".local/state/rldyour-cleaner/last-run.json")
+            .is_file()
+    );
+    assert!(!f.0.join("relative-state").exists());
+}
+
+#[test]
+fn oversized_policy_is_refused_before_cache_discovery_or_pruning() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    let output = f
+        .cli(&cache, &" ".repeat(256 * 1024 + 1))
+        .args(["run", "--json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!f.0.join("gc.log").exists());
+    assert!(cache.join("unused").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_config_initialization_keeps_existing_parent_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let parent = f.0.join("project");
+    fs::create_dir(&parent).unwrap();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+    let config = parent.join("cleaner.toml");
+    let output = Command::new(env!("CARGO_BIN_EXE_rldyour-cleaner"))
+        .arg("--config")
+        .arg(&config)
+        .args(["config", "--init"])
+        .env("HOME", &f.0)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        fs::metadata(parent).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+    assert_eq!(
+        fs::metadata(config).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}

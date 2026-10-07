@@ -9,8 +9,7 @@ Type=oneshot
 # cleans up after.
 Nice=19
 IOSchedulingClass=idle
-# A 200 GB remove_dir_all at idle IO takes minutes; a wedged one must still
-# not run forever.
+# Bound the entire oneshot in addition to native command deadlines.
 TimeoutStartSec=5min
 UMask=0077
 MemoryMax=512M

@@ -1,5 +1,5 @@
 //! Evaluation and reporting share one pipeline. Scans/dry runs never mutate
-//! content or overwrite the last successful run; real runs own a private lock.
+//! content or overwrite the last actual run; real runs own a private lock.
 use crate::{
     clean::RunLock,
     config::Policy,
