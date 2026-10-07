@@ -182,3 +182,47 @@ setup-uv releases on CI. Only temporary synthetic cache entries are deleted.
 POSIX lease/symlink tests do not claim corresponding Windows link behavior;
 Windows exercises cached-environment removal/default preservation and the
 Rust Job Object/regression tests independently.
+
+
+## System-maintenance closure (2026-10-07)
+
+The next audit checked the whole execution chain, not only a present timer.
+Ubuntu's installed apt.systemd.daily invokes autoclean from its `install`
+branch: apt-daily-upgrade owns it, while apt-daily is the update/download
+branch. The periodic enable default is 1, an explicit 0 disables everything,
+and Clean-Installed must remain false for installed archive preservation.
+Doctor observes effective values without evaluating shell output and removes
+user APT_CONFIG overrides when querying the system policy. It separately
+reports native timer state, wrapper result and autoclean-stamp metadata.
+The wrapper can exit successfully after skipping work, so no single one of
+those observations is presented as proof that all maintenance completed.
+
+Doctor has its own read-only pipeline and never enters runner/native GC,
+creates a state directory, obtains a cleaner run lock or overwrites status.
+It diagnoses saved failure/preview/stale/future/older-version reports, valid
+completion state and opt-in environment removal. Linux uses one user-manager
+snapshot, macOS one own-agent launchctl snapshot, and Windows fixed native
+Get-ScheduledTask/Get-ScheduledTaskInfo queries scoped to the root task.
+Only whitelisted fields reach the report; native scheduler output is bounded,
+raw environment/action dumps are not echoed, and incomplete formats stay
+unknown. No observer changes or starts native jobs.
+
+Redirected cache ancestors now stop shallow inventory too. Windows install
+routes all validate policy with staged new code before replacing the installed
+executable. A synthetic PE with an appended marker makes unintended overwrite
+observable in the invalid-policy lifecycle test. Existing user policy, job
+registration and code are preserved on that refusal.
+
+Primary references:
+
+- [APT configuration queries/types](https://manpages.ubuntu.com/manpages/resolute/man8/apt-config.8.html).
+- Installed Ubuntu `/usr/lib/apt/apt.systemd.daily`, apt-daily.service and
+  apt-daily-upgrade.service (exact host package implementation, read-only).
+- [systemd timer lifecycle](https://github.com/systemd/systemd/blob/main/man/systemd.timer.xml).
+- [Apple launchd jobs/lifecycle](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html).
+- [Microsoft task runtime information](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/get-scheduledtaskinfo).
+
+Native command formats can change or access may be unavailable; doctor reports
+that uncertainty instead of fabricating a healthy job. A successful diagnostic
+is scoped to these observed checks, not a guarantee about every application
+cache, the whole OS, future data use, or hardware reliability.

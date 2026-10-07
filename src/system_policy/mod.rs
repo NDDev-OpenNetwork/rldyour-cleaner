@@ -38,3 +38,6 @@ pub fn observe(timeout: std::time::Duration) -> Vec<SystemPolicy> {
 pub fn enable_apt_autoclean() -> Result<(), String> {
     platform::enable_apt_autoclean()
 }
+pub fn scheduler_checks(timeout: std::time::Duration) -> Vec<crate::doctor::Check> {
+    platform::scheduler_checks(timeout)
+}

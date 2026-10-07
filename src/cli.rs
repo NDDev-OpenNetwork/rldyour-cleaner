@@ -20,6 +20,12 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Cmd {
+    /// Check native schedules, actual last-run state and preservation policy.
+    /// Read-only: never starts jobs, GC, installs or writes reports.
+    Doctor {
+        #[arg(long)]
+        json: bool,
+    },
     /// Preview the weekly obsolete-archive policy; --enable explicitly installs
     /// it as root on Debian/Ubuntu. Normal user installation never changes APT.
     AptAutoclean {

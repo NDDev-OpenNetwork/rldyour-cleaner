@@ -12,6 +12,14 @@ pub(super) fn observe(
 ) -> Option<CacheResult> {
     let mut found = Vec::new();
     for path in paths {
+        if crate::safety::plain_path(&path).is_err() {
+            return Some(result(
+                id,
+                vec![path],
+                Action::Protected,
+                "cache path is redirected or cannot be verified; no traversal or mutation",
+            ));
+        }
         match path.symlink_metadata() {
             Ok(md) if os::is_redirect(&md) => {
                 return Some(result(

@@ -23,6 +23,16 @@ try {
     $Config = Join-Path $env:LOCALAPPDATA 'rldyour-cleaner/config.toml'
     if (-not (Test-Path $Exe) -or -not (Test-Path $Config)) { throw 'Code/config missing' }
     $Original = Get-Content $Config -Raw
+    # Appending data to a synthetic PE makes an unintended replacement visible.
+    $Append = [IO.File]::Open($Exe, [IO.FileMode]::Append, [IO.FileAccess]::Write)
+    try { $Bytes = [Text.Encoding]::UTF8.GetBytes('synthetic-existing-binary'); $Append.Write($Bytes, 0, $Bytes.Length) } finally { $Append.Dispose() }
+    $PreviousHash = (Get-FileHash $Exe -Algorithm SHA256).Hash
+    Set-Content $Config 'unknown_policy_key=true'
+    $Refused = $false
+    try { & (Join-Path $Package 'install.ps1') } catch { $Refused = $true }
+    if (-not $Refused -or (Get-FileHash $Exe -Algorithm SHA256).Hash -ne $PreviousHash) { throw 'Invalid policy replaced existing code' }
+    Set-Content $Config $Original -NoNewline
+
     if ($global:RldCleanerTestTask.Trigger.Hour -ne 3 -or $global:RldCleanerTestTask.Trigger.Minute -ne 0 -or -not $global:RldCleanerTestTask.Settings.Catchup -or $global:RldCleanerTestTask.Settings.Instances -ne 'IgnoreNew' -or $global:RldCleanerTestTask.Settings.Limit -ne 5) { throw 'Wrong scheduler settings' }
     if ($global:RldCleanerTestTask.Action.Execute -ne $Exe -or $global:RldCleanerTestTask.Action.Argument -ne 'run') { throw 'Wrong task action' }
     & (Join-Path $Package 'install.ps1')
