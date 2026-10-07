@@ -29,6 +29,11 @@ pub fn plain_path(path: &Path) -> std::io::Result<()> {
             return Err(std::io::Error::other("parent traversal refused"));
         }
         current.push(part);
+        // A Windows drive/UNC prefix alone is not an inspectable filesystem
+        // path; wait for its root component before asking for metadata.
+        if matches!(part, Component::Prefix(_)) {
+            continue;
+        }
         match fs::symlink_metadata(&current) {
             Ok(md) if is_redirect(&md) => {
                 return Err(std::io::Error::other("redirected path refused"));
