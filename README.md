@@ -4,6 +4,8 @@ A small Rust oneshot that schedules **native unused-cache garbage collection**
 and reports other developer caches. Linux, macOS and Windows use their OS
 scheduler; there is no resident daemon or continuous polling.
 
+Current stable release: **0.3.0**.
+
 Version 0.1 removes the 0.0.x age-based deletion paths. Old timestamps, missing
 open file handles, a `CACHEDIR.TAG`, and a successful directory rename do **not**
 prove that files are unused. This matters for installed tools, virtual

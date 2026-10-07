@@ -1,5 +1,10 @@
 # rldyour-cleaner — agent instructions
 
+Current stable release: 0.3.0. The 2026-10-08 qualification found no native
+errors; a fresh Ubuntu boot may legitimately report that the next scheduled
+Cleaner/APT completion has not happened yet. Do not force maintenance merely
+to remove that diagnostic warning.
+
 Rust oneshot for native unused-cache GC and optional read-only artifact
 inventory. Platforms: Linux, macOS ARM/Intel, Windows. Public repository:
 English in code/docs; no host, user, estate paths or private content.

@@ -1,4 +1,4 @@
-# Cleanup boundaries and research — 2026-10-07
+# Cleanup boundaries and research — current through 2026-10-08
 
 Age is a candidate-discovery heuristic, not proof of non-use. Package stores
 can contain hardlinks referenced by installed environments; applications may
@@ -226,3 +226,15 @@ Native command formats can change or access may be unavailable; doctor reports
 that uncertainty instead of fabricating a healthy job. A successful diagnostic
 is scoped to these observed checks, not a guarantee about every application
 cache, the whole OS, future data use, or hardware reliability.
+
+## Operational qualification — 2026-10-08
+
+Release 0.3.0 is installed on macOS and Ubuntu with the native user scheduler
+active. The read-only doctor passes with no errors on both systems. Immediately
+after a clean Ubuntu boot, a warning that no cleaner or APT completion timestamp
+exists for the new user-manager session is expected until the scheduled job
+runs; it is not a failed service and must not be cleared by forcing package
+updates. The timer, persistence and next-run state remain the authoritative
+automation checks. Cached environments, package stores and user data remain
+outside automatic deletion unless an explicitly audited provider policy allows
+it.
