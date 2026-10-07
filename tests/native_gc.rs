@@ -1,5 +1,5 @@
 //! Full CLI tests in private homes and synthetic caches, never the user's data.
-use rldyour_cleaner::{clean::RunLock, process, report::Report};
+use rldyour_cleaner::{clean::RunLock, process};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -221,7 +221,11 @@ fn redirected_cache_and_report_destinations_are_refused() {
     fs::write(&destination, b"keep").unwrap();
     fs::remove_file(f.state().join("last-run.json")).unwrap();
     std::os::unix::fs::symlink(&destination, f.state().join("last-run.json")).unwrap();
-    assert!(Report::new(false, false, None).save(&f.state()).is_err());
+    assert!(
+        rldyour_cleaner::report::Report::new(false, false, None)
+            .save(&f.state())
+            .is_err()
+    );
     assert_eq!(fs::read(destination).unwrap(), b"keep");
 }
 #[test]
