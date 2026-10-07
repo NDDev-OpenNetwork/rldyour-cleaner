@@ -14,9 +14,16 @@ const OUTPUT_LIMIT: usize = 16 * 1024;
 pub struct Output {
     pub stdout: String,
     pub stderr: String,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
 }
-fn drain(mut source: impl Pipe, deadline: Instant, cancelled: &AtomicBool) -> io::Result<Vec<u8>> {
+fn drain(
+    mut source: impl Pipe,
+    deadline: Instant,
+    cancelled: &AtomicBool,
+) -> io::Result<(Vec<u8>, bool)> {
     let mut output = Vec::with_capacity(1024);
+    let mut truncated = false;
     let mut chunk = [0u8; 4096];
     os::prepare_pipe(&source)?;
     loop {
@@ -27,9 +34,10 @@ fn drain(mut source: impl Pipe, deadline: Instant, cancelled: &AtomicBool) -> io
             ));
         }
         match os::read_pipe(&mut source, &mut chunk)? {
-            Some(0) => return Ok(output),
+            Some(0) => return Ok((output, truncated)),
             Some(count) => {
                 let keep = count.min(OUTPUT_LIMIT.saturating_sub(output.len()));
+                truncated |= keep < count;
                 output.extend_from_slice(&chunk[..keep]);
             }
             None => std::thread::sleep(Duration::from_millis(5)),
@@ -105,9 +113,13 @@ pub fn run(command: &mut Command, timeout: Duration) -> Result<Output, String> {
         .map_err(|_| "stderr reader failed")?
         .map_err(|e| e.to_string());
     let status = status?;
+    let (stdout, stdout_truncated) = out?;
+    let (stderr, stderr_truncated) = err?;
     let output = Output {
-        stdout: String::from_utf8_lossy(&out?).trim().into(),
-        stderr: String::from_utf8_lossy(&err?).trim().into(),
+        stdout: String::from_utf8_lossy(&stdout).trim().into(),
+        stderr: String::from_utf8_lossy(&stderr).trim().into(),
+        stdout_truncated,
+        stderr_truncated,
     };
     if !status.success() {
         return Err(format!("native tool failed ({status}): {}", output.stderr));

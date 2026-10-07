@@ -6,6 +6,30 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-07
+
+### Fixed
+
+- Preserve uv cached environments by default, including environments linked
+  from projects. The audited vendor implementation removes all cached
+  environments in normal prune, not only dangling content. Legacy `uv=true`
+  no longer authorizes this; a separate explicit rebuildable-environment opt-in
+  is required. Symlink link mode refuses GC. Unreviewed uv versions are kept.
+- Refuse directory, FIFO, redirected and oversized report destinations before
+  native GC. Status reads a bounded regular file and validates cleaner identity
+  before displaying it. Native output records truncation; incomplete discovery
+  cannot choose a mutation destination or be treated as complete policy data.
+
+### Validation
+
+- Real vendor contract checks for uv 0.12.17 and 0.12.23 on CI: synthetic caches
+  reproduce cached environment removal/default preservation; POSIX additionally
+  tests the shared native lease and preservation of external symlink targets.
+- Added regression tests for legacy opt-in, symlink link mode, unreviewed
+  versions, special/oversized state, bounded status and output truncation.
+- Corrected documentation to distinguish native command coordination from
+  future direct interpreter use and optional centralized/cache-linked setups.
+
 ## [0.2.0] - 2026-10-07
 
 ### Added

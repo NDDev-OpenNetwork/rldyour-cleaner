@@ -36,6 +36,11 @@ impl Fixture {
     }
     fn cli(&self, cache: &Path, policy: &str) -> Command {
         let config = self.0.join("config.toml");
+        let policy = if policy.contains("[native_gc]") {
+            policy.to_string()
+        } else {
+            format!("{policy}\n[native_gc]\nuv_prune_rebuildable_environments=true\n")
+        };
         fs::write(&config, policy).unwrap();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_rldyour-cleaner"));
         cmd.args(["--config"])
@@ -51,6 +56,7 @@ impl Fixture {
             .env("PATH", tool().parent().unwrap())
             .env("PATHEXT", ".EXE")
             .env_remove("FIXTURE_UV_VERSION");
+        cmd.env_remove("UV_LINK_MODE");
         cmd
     }
     fn state(&self) -> PathBuf {
@@ -143,6 +149,121 @@ fn native_gc_only_removes_the_owners_dangling_fixture_and_saves_atomic_report() 
             0o600
         );
     }
+}
+
+#[test]
+fn legacy_uv_enable_does_not_authorize_cached_environment_removal() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    fs::create_dir(cache.join("environments-v2")).unwrap();
+    fs::write(
+        cache.join("environments-v2/linked-project"),
+        b"needed-fixture",
+    )
+    .unwrap();
+    let report = json(
+        f.cli(&cache, "[native_gc]\nuv=true")
+            .args(["run", "--json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(report["caches"][0]["action"], "kept");
+    assert!(cache.join("environments-v2/linked-project").exists());
+    assert!(cache.join("unused").exists());
+    assert!(!f.0.join("gc.log").exists());
+}
+
+#[test]
+fn symlink_link_mode_and_unreviewed_uv_versions_refuse_pruning() {
+    for variant in ["symlink", "0.12.24", "1.0.0"] {
+        let f = Fixture::new();
+        let cache = f.cache();
+        let mut cmd = f.cli(&cache, "");
+        if variant == "symlink" {
+            cmd.env("UV_LINK_MODE", "symlink");
+        } else {
+            cmd.env("FIXTURE_UV_VERSION", variant);
+        }
+        let report = json(cmd.args(["run", "--json"]).output().unwrap());
+        assert!(!matches!(
+            report["caches"][0]["action"].as_str(),
+            Some("pruned" | "would-prune")
+        ));
+        assert!(cache.join("unused").exists());
+        assert!(!f.0.join("gc.log").exists());
+    }
+}
+
+#[test]
+fn directory_and_oversized_report_destinations_fail_before_native_gc() {
+    for variant in ["directory", "oversized"] {
+        let f = Fixture::new();
+        let cache = f.cache();
+        fs::create_dir_all(f.state()).unwrap();
+        let report = f.state().join("last-run.json");
+        if variant == "directory" {
+            fs::create_dir(&report).unwrap();
+        } else {
+            fs::File::create(&report)
+                .unwrap()
+                .set_len(rldyour_cleaner::report::MAX_REPORT_BYTES + 1)
+                .unwrap();
+        }
+        let output = f.cli(&cache, "").args(["run", "--json"]).output().unwrap();
+        assert!(!output.status.success());
+        assert!(cache.join("unused").exists());
+        assert!(!f.0.join("gc.log").exists());
+    }
+}
+
+#[test]
+fn status_accepts_own_valid_report_and_refuses_untrusted_or_large_state() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.state()).unwrap();
+    let report = f.state().join("last-run.json");
+    for value in [
+        "not json",
+        "{\"tool\":\"different-program\"}",
+        "{\"tool\":\"rldyour-cleaner\"}",
+    ] {
+        fs::write(&report, value).unwrap();
+        assert!(rldyour_cleaner::report::read_status(&f.state()).is_err());
+    }
+    fs::write(
+        &report,
+        serde_json::to_vec(&rldyour_cleaner::report::Report::new(false, false, None)).unwrap(),
+    )
+    .unwrap();
+    assert!(rldyour_cleaner::report::read_status(&f.state()).is_ok());
+    fs::File::create(&report)
+        .unwrap()
+        .set_len(rldyour_cleaner::report::MAX_REPORT_BYTES + 1)
+        .unwrap();
+    assert!(rldyour_cleaner::report::read_status(&f.state()).is_err());
+    #[cfg(unix)]
+    {
+        fs::remove_file(&report).unwrap();
+        let secret = f.0.join("synthetic-secret");
+        fs::write(&secret, b"fixture-never-read").unwrap();
+        std::os::unix::fs::symlink(secret, report).unwrap();
+        assert!(rldyour_cleaner::report::read_status(&f.state()).is_err());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn fifo_report_never_blocks_status_or_starts_native_gc() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    fs::create_dir_all(f.state()).unwrap();
+    let fifo = f.state().join("last-run.json");
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    assert!(rldyour_cleaner::report::read_status(&f.state()).is_err());
+    let output = f.cli(&cache, "").args(["run", "--json"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(!f.0.join("gc.log").exists());
 }
 
 #[test]
@@ -313,6 +434,7 @@ fn command_output_is_bounded_and_timeout_reaps_the_child() {
     let output = process::run(Command::new(tool()).arg("loud"), Duration::from_secs(5)).unwrap();
     assert_eq!(output.stdout.len(), 16 * 1024);
     assert_eq!(output.stderr.len(), 16 * 1024);
+    assert!(output.stdout_truncated && output.stderr_truncated);
     let start = Instant::now();
     assert!(
         process::run(

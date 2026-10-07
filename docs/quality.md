@@ -11,9 +11,12 @@ cover the race with another snapshot or a shorter freshness interval.
 
 The uv adapter uses `cache prune`, never direct cache edits. uv documents
 append-only cache safety, periodic prune and cache-modification locking. Version
-0.12.17 is the lowest version qualified for this adapter; unknown/prerelease
-strings are kept. Prune can remove centralized cached environments which uv
-recreates as needed; it does not prune ordinary project environments. The
+0.12.17 and 0.12.23 are the two qualified versions for this adapter; other
+release/prerelease strings are kept. Prune removes all centralized/cached environments, including targets
+referenced by project links. A regular project-local environment is outside the
+cache, but symlink-installed dependencies can still depend on cache files. The
+default policy therefore never invokes prune; a separate explicit opt-in is
+required for rebuildable environments after reviewing those dependencies. The
 cache marker validates a dedicated cache path, but is not evidence that every
 file within it is disposable. uv decides what can be removed.
 
@@ -134,7 +137,48 @@ Primary research:
 - [pnpm 12.10.1 prune implementation](https://github.com/pnpm/pnpm/blob/v12.10.1/pnpm11/store/controller/src/storeController/prune.ts).
 - [Bun cache/backend semantics](https://bun.com/docs/pm/global-cache).
 - [Playwright client-tracked browser GC](https://playwright.dev/docs/browsers#stale-browser-removal).
-- [APT autoclean semantics](https://github.com/Debian/apt/blob/main/doc/apt-get.8.xml).
+- [APT autoclean semantics](https://manpages.ubuntu.com/manpages/resolute/man8/apt-get.8.html).
 - [BleachBit CleanerML example](https://github.com/bleachbit/bleachbit/blob/master/doc/example_cleaner.xml).
 - [Topgrade native Node steps](https://github.com/topgrade-rs/topgrade/blob/main/src/steps/node.rs).
 - [cargo-sweep](https://github.com/holmgr/cargo-sweep).
+
+
+## Preservation audit (2026-10-07)
+
+The original vendor-GC assumption needed a narrower contract. In both audited
+uv versions, `Cache::prune` explicitly removes every `environments-v2` entry.
+The native cache lease serializes active uv commands; it cannot protect direct
+Python uses outside uv or preserve linked environments for future/offline use.
+A synthetic real-vendor test reproduces the dangling project-environment link
+after prune, while default cleaner policy refuses the operation. This is an
+intentional preservation correction, not a broader deletion adapter. The older
+external-symlink escape (#19542/#19543) is fixed in the two audited releases and
+is tested with synthetic victim content that must survive.
+
+`uv_prune_rebuildable_environments=false` is the compatibility/default boundary:
+legacy uv=true alone never enables prune. Explicit opt-in has documented scope;
+UV_LINK_MODE=symlink refuses it, and unknown vendor releases are kept. Absence of
+a symlink setting is not evidence about existing dependencies. User cache
+contents or global project trees are never scanned to invent that proof.
+
+Reports are at most 4 MiB and destinations must be regular files before GC.
+Directory/FIFO/redirected/oversized destinations fail without native mutation.
+Status validates the cleaner identity instead of printing arbitrary file
+contents. Discovery output truncation is explicit and fails closed for native
+version/path/system-policy decisions. These bounds improve observable failure
+without adding runtime dependencies, cache walks or resident polling.
+
+Primary evidence:
+
+- [Exact uv 0.12.17 cache implementation](https://github.com/astral-sh/uv/blob/0.12.17/crates/uv-cache/src/lib.rs).
+- [Exact uv 0.12.23 cache implementation](https://github.com/astral-sh/uv/blob/0.12.23/crates/uv-cache/src/lib.rs).
+- [Centralized project environments](https://docs.astral.sh/uv/concepts/projects/layout/#centralized-project-environments).
+- [Symlink link-mode caveat](https://docs.astral.sh/uv/reference/settings/#link-mode).
+- [External-symlink escape fix](https://github.com/astral-sh/uv/pull/19543).
+- [Installed Ubuntu APT 3.2 documentation](https://manpages.ubuntu.com/manpages/resolute/man8/apt-get.8.html).
+
+The real-vendor checks use installed official uv on the two devices and pinned
+setup-uv releases on CI. Only temporary synthetic cache entries are deleted.
+POSIX lease/symlink tests do not claim corresponding Windows link behavior;
+Windows exercises cached-environment removal/default preservation and the
+Rust Job Object/regression tests independently.

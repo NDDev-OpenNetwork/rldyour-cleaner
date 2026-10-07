@@ -42,12 +42,14 @@ pub struct Policy {
 #[serde(default, deny_unknown_fields)]
 pub struct NativeGc {
     pub uv: bool,
+    pub uv_prune_rebuildable_environments: bool,
     pub interval_hours: u64,
 }
 impl Default for NativeGc {
     fn default() -> Self {
         Self {
             uv: true,
+            uv_prune_rebuildable_environments: false,
             interval_hours: 20,
         }
     }
@@ -369,6 +371,7 @@ pressure_pct = 101      # pressure is reported; never enables destructive GC
 
 [native_gc]
 uv = true
+uv_prune_rebuildable_environments = false # explicit opt-in; uv prune removes cached environments too
 interval_hours = 20     # daily jitter tolerance; not a file-age deletion rule
 
 [pressure]
@@ -404,6 +407,7 @@ mod tests {
         assert!(p.roots.is_empty());
         assert!(!p.categories.trash);
         assert!(!p.categories.cargo_registry);
+        assert!(!p.native_gc.uv_prune_rebuildable_environments);
         let routine = p.ages(false);
         let press = p.ages(true);
         assert!(press.stale < routine.stale);

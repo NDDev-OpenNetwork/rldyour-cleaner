@@ -23,7 +23,11 @@ pub fn evaluate(policy: &Policy, dry_run: bool, inspect_projects: bool) -> Resul
     let started = Instant::now();
     let mut cadence = Ledger::load(&os::state_dir())?;
     // Refuse redirected report destinations before invoking any native GC.
-    crate::safety::plain_path(&os::state_dir().join("last-run.json")).map_err(|e| e.to_string())?;
+    crate::safety::state_file(
+        &os::state_dir().join("last-run.json"),
+        crate::report::MAX_REPORT_BYTES,
+    )
+    .map_err(|e| e.to_string())?;
     let use_pct = os::pressure_level(&policy.roots);
     let pressure = use_pct.is_some_and(|p| p >= policy.pressure_pct);
     let mut report = Report::new(pressure, dry_run, use_pct);

@@ -41,6 +41,20 @@ pub fn private_dir(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Validate a bounded state destination before mutation; directories/FIFOs
+/// must never turn a later report operation into a hang or surprise failure.
+pub fn state_file(path: &Path, limit: u64) -> std::io::Result<()> {
+    plain_path(path)?;
+    match fs::symlink_metadata(path) {
+        Ok(md) if !md.is_file() || md.len() > limit => Err(std::io::Error::other(
+            "state must be a regular bounded file",
+        )),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Protect both the lexical location and actual destination of native GC.
 /// User-declared report roots/protect prefixes never become cache destinations.
 pub fn cache_allowed(path: &Path, policy: &crate::config::Policy) -> Result<PathBuf, String> {
