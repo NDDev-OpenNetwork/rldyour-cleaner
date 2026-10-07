@@ -1,10 +1,13 @@
 //! System maintenance remains owned by the OS/package manager. Observation
 //! and the explicitly requested root APT policy are separate from user GC.
 #[cfg(target_os = "linux")]
+#[path = "../os/linux_policy.rs"]
 mod linux;
 #[cfg(target_os = "macos")]
+#[path = "../os/macos_policy.rs"]
 mod macos;
 #[cfg(windows)]
+#[path = "../os/windows_policy.rs"]
 mod windows;
 #[cfg(target_os = "linux")]
 use linux as platform;

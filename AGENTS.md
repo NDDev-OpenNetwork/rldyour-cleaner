@@ -13,7 +13,7 @@ English in code/docs; no host, user, estate paths or private content.
 | runner | one preview/run pipeline and reporting decisions |
 | homecache/{uv,node,inventory} | native locked GC and separate shallow inventory |
 | maintenance | bounded private success/cadence ledger; no file-age eviction |
-| system_policy/{linux,macos,windows} | native OS policy observation; explicit root APT policy only on Linux |
+| system_policy + os/*_policy | native OS policy observation; explicit root APT policy only on Linux |
 | process | argv-only native commands, deadlines and bounded pipe draining |
 | clean | private per-user run lock; never recursive removal |
 | safety | nonredirected dedicated paths, cache marker and protected roots |
