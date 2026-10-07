@@ -49,11 +49,14 @@ pub fn cache_allowed(path: &Path, policy: &crate::config::Policy) -> Result<Path
     if !canonical.is_dir() || canonical.parent().is_none() || canonical == crate::os::home_dir() {
         return Err("cache path is not a dedicated directory".into());
     }
-    if policy
-        .protect
+    if policy.protect.iter().any(|p| {
+        !p.is_empty()
+            && (canonical.to_string_lossy().contains(p)
+                || (Path::new(p).is_absolute() && Path::new(p).starts_with(&canonical)))
+    }) || policy
+        .roots
         .iter()
-        .any(|p| !p.is_empty() && canonical.to_string_lossy().contains(p))
-        || policy.roots.iter().any(|root| canonical.starts_with(root))
+        .any(|root| canonical.starts_with(root) || root.starts_with(&canonical))
     {
         return Err("protected path".into());
     }

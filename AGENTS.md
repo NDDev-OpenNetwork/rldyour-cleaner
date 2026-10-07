@@ -11,7 +11,9 @@ English in code/docs; no host, user, estate paths or private content.
 | cli / lib | argument routing only |
 | config | strict TOML, defaults, legacy field compatibility, policy limits |
 | runner | one preview/run pipeline and reporting decisions |
-| homecache | owning-tool GC adapters and shallow cache inventory |
+| homecache/{uv,node,inventory} | native locked GC and separate shallow inventory |
+| maintenance | bounded private success/cadence ledger; no file-age eviction |
+| system_policy/{linux,macos,windows} | native OS policy observation; explicit root APT policy only on Linux |
 | process | argv-only native commands, deadlines and bounded pipe draining |
 | clean | private per-user run lock; never recursive removal |
 | safety | nonredirected dedicated paths, cache marker and protected roots |
@@ -27,6 +29,13 @@ English in code/docs; no host, user, estate paths or private content.
 
 - Mutation only through a verified owning-tool unused-entry GC adapter.
   Currently uv >=0.12.17, explicit validated cache dir, offline, native lock.
+- Native npm/pnpm commands without a verified shared install/GC lease remain
+  inventory-only. Never launch Corepack shims during discovery/preview.
+- Successful GC is throttled by provider/cache identity. Failure never advances
+  it; malformed/redirected state blocks GC, preview never writes the ledger.
+- APT weekly autoclean is an explicit root CLI operation, never an installer
+  side effect. Publish a fixed no-replace policy only, preserving local edits;
+  no immediate clean/autoremove, system restart, new root daemon or sudo grant.
 - No arbitrary file/tree eviction by mtime, no process-liveness inference,
   no whole-cache wipe, no force/prune-ci, no fallback after native failure.
 - Project roots, dependency trees, environments, installed runtimes, Trash,

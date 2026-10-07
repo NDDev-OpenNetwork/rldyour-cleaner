@@ -87,3 +87,54 @@ Additional primary references checked 2026-10-07:
 - [Apple scheduling and sleep/power-off behavior](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/ScheduledJobs.html).
 - [Microsoft Task Scheduler settings](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtasksettingsset).
 - [Systemd timer upstream reference](https://github.com/systemd/systemd/blob/main/man/systemd.timer.xml).
+
+
+## Provider/OS policy separation (2026-10-07)
+
+Native mutation is isolated from inventory. A typed action is shared by JSON,
+summary accounting and the cadence recorder, so kept/not-due/disabled cannot
+be recorded as successful GC. The private 64-KiB completion ledger has bounded
+entries, atomic replacement, exact provider/cache identity, clock-rollback
+deferral and no historical copies. Preview never creates it; a corrupt ledger
+blocks mutation. The 20-hour default avoids alternate-day skips caused by
+daily scheduler jitter. Absolute protected children and roots also prevent GC
+of an enclosing cache. No recursive tree-size walks are added.
+
+The reviewed npm cacache implementation mark/sweeps content, truncates/rebuilds
+index buckets and recursively removes its temporary directory; pnpm prune also
+removes temporary/metadata stores and expired runnable dlx environments. Neither
+provides a verified common install/GC lease for this implementation. Their
+own documentation recommends native maintenance, but that alone does not prove
+unattended concurrency safety. They remain read-only coverage; no process
+snapshot, force flag or wrapper advisory lock pretends to coordinate unrelated
+installers. Corepack shims are not invoked even for discovery. Bun only offers
+a whole-cache reset or project prune, so its cache is retained.
+
+APT automation is a separate explicit root command on Debian/Ubuntu. It publishes
+one fixed weekly policy through a synced staging inode and atomic no-replace
+hard link in a trusted apt.conf.d directory. A partial file is never published;
+existing local edits, redirects or writable/untrusted policy paths are refused.
+Normal installation/uninstallation does not change privileged system policy.
+APT retains currently available downloaded archives and owns native locking;
+no packages are uninstalled, no new root service or sudo grant is created.
+OS timer/effective interval observation is separate for Linux/macOS/Windows.
+Unknown native policy is reported as unknown, not fabricated successful cleanup.
+
+Compared with BleachBit's extensible CleanerML and Topgrade's native-command
+steps, this project retains specific provider modules and explainable previews
+but excludes pattern-based cache deletion and blanket cleanup switches.
+Cargo-sweep's project artifact selection is useful as an explicit build
+maintenance operation, not evidence that an old target is unused.
+
+Primary research:
+
+- [npm cache command contract](https://docs.npmjs.com/cli/v11/commands/npm-cache/).
+- [npm cacache verification implementation](https://github.com/npm/cacache/blob/main/lib/verify.js).
+- [pnpm native store pruning](https://pnpm.io/cli/store).
+- [pnpm 12.10.1 prune implementation](https://github.com/pnpm/pnpm/blob/v12.10.1/pnpm11/store/controller/src/storeController/prune.ts).
+- [Bun cache/backend semantics](https://bun.com/docs/pm/global-cache).
+- [Playwright client-tracked browser GC](https://playwright.dev/docs/browsers#stale-browser-removal).
+- [APT autoclean semantics](https://github.com/Debian/apt/blob/main/doc/apt-get.8.xml).
+- [BleachBit CleanerML example](https://github.com/bleachbit/bleachbit/blob/master/doc/example_cleaner.xml).
+- [Topgrade native Node steps](https://github.com/topgrade-rs/topgrade/blob/main/src/steps/node.rs).
+- [cargo-sweep](https://github.com/holmgr/cargo-sweep).

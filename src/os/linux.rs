@@ -23,3 +23,20 @@ pub fn data_local_dir() -> PathBuf {
 pub fn executable_names(name: &str) -> Vec<String> {
     vec![name.into()]
 }
+pub fn npm_cache_dir() -> PathBuf {
+    home_dir().join(".npm")
+}
+pub fn pnpm_cache_paths() -> Vec<PathBuf> {
+    vec![
+        data_local_dir().join("pnpm/store"),
+        cache_dir().join("pnpm"),
+        home_dir().join(".pnpm-store"),
+    ]
+}
+pub fn browser_cache_paths() -> Vec<PathBuf> {
+    vec![
+        cache_dir().join("google-chrome"),
+        cache_dir().join("google-chrome-beta"),
+        cache_dir().join("chromium"),
+    ]
+}

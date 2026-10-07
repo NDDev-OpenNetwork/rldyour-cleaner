@@ -144,6 +144,99 @@ fn native_gc_only_removes_the_owners_dangling_fixture_and_saves_atomic_report() 
         );
     }
 }
+
+#[test]
+fn successful_gc_cadence_prevents_repeated_work_and_preview_writes() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    let first = json(f.cli(&cache, "").args(["run", "--json"]).output().unwrap());
+    assert_eq!(first["caches"][0]["action"], "pruned");
+    let ledger = f.state().join("maintenance.json");
+    let original = fs::read(&ledger).unwrap();
+    fs::write(cache.join("unused"), b"new-unused-fixture").unwrap();
+    fs::remove_file(f.0.join("gc.log")).unwrap();
+    for args in [&["run", "--json"][..], &["run", "--dry-run", "--json"][..]] {
+        let report = json(f.cli(&cache, "").args(args).output().unwrap());
+        assert_eq!(report["caches"][0]["action"], "not-due");
+        assert!(cache.join("unused").exists());
+        assert!(!f.0.join("gc.log").exists());
+        assert_eq!(fs::read(&ledger).unwrap(), original);
+    }
+}
+
+#[test]
+fn failure_does_not_advance_success_and_invalid_ledger_blocks_gc() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    fs::write(cache.join("busy.lock"), b"fixture-native-lock").unwrap();
+    let failure = f.cli(&cache, "").args(["run", "--json"]).output().unwrap();
+    assert!(!failure.status.success());
+    assert!(!f.state().join("maintenance.json").exists());
+    fs::remove_file(cache.join("busy.lock")).unwrap();
+    fs::write(f.state().join("maintenance.json"), b"invalid-state").unwrap();
+    fs::remove_file(f.0.join("gc.log")).unwrap();
+    let blocked = f.cli(&cache, "").args(["run", "--json"]).output().unwrap();
+    assert!(!blocked.status.success());
+    assert!(!f.0.join("gc.log").exists());
+    assert!(cache.join("unused").exists());
+    fs::remove_file(f.state().join("maintenance.json")).unwrap();
+    let success = json(f.cli(&cache, "").args(["run", "--json"]).output().unwrap());
+    assert_eq!(success["caches"][0]["action"], "pruned");
+}
+
+#[test]
+fn unsafe_node_stores_and_runnable_versions_are_kept_even_when_old() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    for path in [
+        "npm-cache/_cacache",
+        "npm-cache/_npx",
+        ".bun/install/cache",
+        ".pnpm-store",
+        "cache/tracker3",
+    ] {
+        let dir = f.0.join(path);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("valuable"), b"referenced-fixture").unwrap();
+    }
+    let report = json(
+        f.cli(&cache, "[native_gc]\nuv=false")
+            .env("npm_config_cache", f.0.join("npm-cache"))
+            .args(["run", "--json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(report["caches"][0]["action"], "disabled");
+    for id in ["npm", "npx", "bun", "pnpm-store"] {
+        let entry = report["caches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap();
+        assert_eq!(entry["action"], "kept");
+        for path in entry["paths"].as_array().unwrap() {
+            assert!(Path::new(path.as_str().unwrap()).join("valuable").exists());
+        }
+    }
+    assert!(cache.join("unused").exists());
+    assert!(!f.0.join("gc.log").exists());
+}
+
+#[test]
+fn weekly_apt_policy_preview_never_changes_system_or_runs_a_tool() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    let output = f.cli(&cache, "").arg("apt-autoclean").output().unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("AutocleanInterval \"7\"")
+    );
+    assert!(!f.0.join("gc.log").exists());
+    assert!(!f.state().exists());
+}
 #[test]
 fn failed_native_gc_never_falls_back_to_file_deletion() {
     let f = Fixture::new();
@@ -191,6 +284,29 @@ fn overlapping_runs_are_refused_before_native_gc() {
     assert!(!output.status.success());
     assert!(!f.0.join("gc.log").exists());
     assert!(cache.join("unused").exists());
+}
+
+#[test]
+fn cache_cannot_enclose_a_protected_child_or_declared_project_root() {
+    let f = Fixture::new();
+    let cache = f.cache();
+    let child = cache.join("important-project");
+    fs::create_dir(&child).unwrap();
+    for key in ["protect", "roots"] {
+        let policy = format!(
+            "{key}=[{}]",
+            toml::Value::String(child.to_string_lossy().into())
+        );
+        let report = json(
+            f.cli(&cache, &policy)
+                .args(["run", "--json"])
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(report["caches"][0]["action"], "protected");
+        assert!(cache.join("unused").exists());
+        assert!(!f.0.join("gc.log").exists());
+    }
 }
 #[test]
 fn command_output_is_bounded_and_timeout_reaps_the_child() {

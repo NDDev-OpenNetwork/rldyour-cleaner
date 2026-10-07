@@ -45,8 +45,8 @@
     <key>Nice</key>
     <integer>19</integer>
 
-    <!-- launchd's PATH is bare; user-installed toolchains (uv, go, pnpm)
-         live under $HOME, and the liveness probe needs lsof's sbin dir. -->
+    <!-- launchd's PATH is bare; the locked native uv adapter must resolve
+         the owner's installed tool without launching package-manager shims. -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>

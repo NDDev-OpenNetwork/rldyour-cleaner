@@ -6,6 +6,36 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-07
+
+### Added
+
+- Native success cadence, independently keyed to provider/cache path. A daily
+  scheduler has a 20-hour minimum interval tolerant of random delay. Failed GC
+  never records success; clock rollback defers, malformed ledger fails closed.
+  A single bounded private ledger replaces state without archives/backups;
+  scan/dry-run cannot write it. Explicit `[native_gc]` policy can disable uv.
+- Opt-in `apt-autoclean --enable` on Debian/Ubuntu, as root: atomically publish
+  a fixed weekly obsolete-download policy, retaining installed-package archives
+  and refusing to replace local edits. APT
+  owns execution and package locks; no new root service, package uninstall,
+  immediate cleanup or restart. Preview does not touch system state.
+- Native timer/effective APT interval observations and shallow coverage for
+  npx/npm logs/Corepack, browser caches, search indexes, shader caches and
+  compilation caches. Unverified npm/pnpm GC stays inventory-only because a
+  private cleaner lock cannot coordinate with all package installers.
+
+### Structure and safety
+
+- Independent uv, Node-store and inventory modules; typed actions shared by
+  reporting and accounting. Separate OS policy implementations for three OSes.
+- Protection is bidirectional: a native cache cannot contain a declared
+  protected child or project root. Redirected report paths are refused before
+  starting GC. No new runtime dependency or resident process.
+- Synthetic tests cover cadence, repeat preview, failure/retry, corrupt state,
+  retained runnable Node stores, protected descendants and idempotent/no-replace
+  APT policy publication. Hosted CI still runs native tests on all three OSes.
+
 ## [0.1.1] - 2026-10-07
 
 ### Fixed

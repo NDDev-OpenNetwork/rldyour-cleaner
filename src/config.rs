@@ -34,6 +34,23 @@ pub struct Policy {
     pub min_size_bytes: u64,
     pub extra_cache_paths: Vec<PathBuf>,
     pub command_timeout_seconds: u64,
+    pub native_gc: NativeGc,
+}
+
+/// Only verified adapters are configurable. Unknown providers fail closed.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NativeGc {
+    pub uv: bool,
+    pub interval_hours: u64,
+}
+impl Default for NativeGc {
+    fn default() -> Self {
+        Self {
+            uv: true,
+            interval_hours: 20,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,6 +96,7 @@ struct FilePolicy {
     min_size_bytes: u64,
     extra_cache_paths: Vec<String>,
     command_timeout_seconds: u64,
+    native_gc: NativeGc,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +138,7 @@ impl Default for FilePolicy {
             min_size_bytes: 0,
             extra_cache_paths: Vec::new(),
             command_timeout_seconds: 60,
+            native_gc: NativeGc::default(),
         }
     }
 }
@@ -292,12 +311,16 @@ fn policy_from(f: FilePolicy) -> Policy {
             .map(|p| expand_home(p))
             .collect(),
         command_timeout_seconds: f.command_timeout_seconds,
+        native_gc: f.native_gc,
     }
 }
 
 /// The default file, written by `install.sh` (and `config --init`) so users
 /// see every knob with its meaning next to it.
 pub fn validate(policy: &Policy) -> Result<(), String> {
+    if !(1..=8760).contains(&policy.native_gc.interval_hours) {
+        return Err("native_gc.interval_hours must be 1..=8760".into());
+    }
     if !(1..=300).contains(&policy.command_timeout_seconds) {
         return Err("command_timeout_seconds must be 1..=300".into());
     }
@@ -344,6 +367,10 @@ cache_entry_days = 30    # compatibility field; no manual age eviction
 guard_fresh_minutes = 15
 pressure_pct = 101      # pressure is reported; never enables destructive GC
 
+[native_gc]
+uv = true
+interval_hours = 20     # daily jitter tolerance; not a file-age deletion rule
+
 [pressure]
 stale_days = 7
 dep_stale_days = 21
@@ -353,7 +380,7 @@ cache_entry_days = 14
 [categories]
 projects = false        # opt-in report of stale artifacts under roots
 incremental = true      # report nested incremental candidates
-home_caches = true      # native uv prune; inventory other caches
+home_caches = true      # native locked GC; inventory other caches
 devin_versions = false # report only; installed versions are not cache
 cargo_registry = false # report only; Cargo >=1.88 owns its cache GC
 trash = false           # report only; never empty user trash
@@ -423,6 +450,7 @@ mod tests {
         for text in [
             "stale_days = 999999999",
             "command_timeout_seconds = 0",
+            "[native_gc]\ninterval_hours = 0",
             "roots = [\"/\"]",
             "roots = [\"/tmp/../\"]",
         ] {

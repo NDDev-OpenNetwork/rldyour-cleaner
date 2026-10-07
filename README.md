@@ -22,6 +22,55 @@ environments, package stores, build outputs and lazily loaded application data.
 | Custom paths, Trash, pending directories from older cleaner versions | Kept; no inferred deletion authorization |
 | OS temporary files | Stock OS policy; installer never changes `/tmp` retention or runs tmpfiles cleanup |
 
+Version 0.2 adds a bounded completion ledger: successful uv GC is performed no
+more often than `[native_gc].interval_hours` (default 20 hours, allowing jitter
+around a daily schedule). Cache identity changes reset eligibility; failed GC
+does not advance it, clock rollback defers it, and malformed state fails closed.
+`not-due` is a successful scheduling decision, not a failure. Preview reads but
+never writes the ledger. No timer/polling is added to the Rust process.
+
+Reports include shallow Node/browser/shader/index inventory and native system
+maintenance observations. `managed` means the owning tool controls cleanup
+when invoked; it does **not** assert that custom owner policy is enabled, that
+a job ran today, or that a cache is unused. Paths inferred from defaults/env may
+differ from tool config; explicit custom paths can be added for inventory.
+No package-manager shim is launched: even `pnpm --version` through Corepack
+can download a runtime. No cache tree sizes or contents are inspected.
+
+## Opt-in Debian/Ubuntu archive maintenance
+
+APT holds its own package/cache locks and already has a system scheduler. To
+automate obsolete **downloaded archives** without uninstalling anything:
+
+```sh
+rldyour-cleaner apt-autoclean             # preview only; no file writes
+sudo /absolute/path/rldyour-cleaner apt-autoclean --enable
+```
+
+The explicit root command installs exactly
+`/etc/apt/apt.conf.d/90-rldyour-cleaner-autoclean`, setting
+`APT::Periodic::AutocleanInterval "7"` and `APT::Clean-Installed "false"`.
+Installed-package archives are retained. Its publish is atomic/no-replace;
+matching policy is idempotent, local edits and redirects are refused. It never
+starts GC, updates, reboot or another root daemon. `apt-daily.timer` must remain
+active; the report observes its status and the effective APT interval. Native
+`autoclean` retains currently downloadable archives, unlike `apt clean`.
+Normal installers never request sudo or modify system policy. Uninstalling
+user code leaves this explicit OS policy intact; an administrator can remove
+that single policy file to restore earlier APT defaults.
+
+### Intentionally retained stores
+
+`npm cache verify` is supported for manual maintenance, but current cacache GC
+deletes `tmp` and rewrites indexes without a shared lease with installers.
+`pnpm store prune` also removes tmp/metadata, expired dlx installations and
+global-store entries. Their native ownership alone is not a coordinated GC
+contract, so neither runs unattended here. A process snapshot/advisory cleaner
+lock cannot close an installer-start race. Bun's global cache reset, pip purge,
+Go module-cache clean, npx removal and browser/runtime resets are also excluded.
+Running applications and future offline installs retain these caches. Large
+cache presence is not an authorization to wipe it.
+
 The uv adapter resolves the executable, checks a supported release version,
 asks uv for the actual cache directory and validates the destination against
 `protect` and project roots. The directory must be dedicated, unredirected and
@@ -59,7 +108,7 @@ assets. Source installs use `cargo build --release --locked`. The installer
 preserves existing policy, validates it, installs the schedule and never starts
 cleanup explicitly. An overdue OS-scheduled job may run after the schedule is
 armed. Windows can also fetch the explicit
-`-Version 0.1.1` release when building from source is unavailable.
+`-Version 0.2.0` release when building from source is unavailable.
 
 | OS | Schedule |
 |---|---|
@@ -101,6 +150,10 @@ protect = []
 extra_cache_paths = []       # inventory only
 command_timeout_seconds = 60 # 1..300; each discovery command is capped at 5s
 pressure_pct = 101
+
+[native_gc]
+uv = true
+interval_hours = 20          # successful-GC minimum interval, not entry age
 
 [categories]
 projects = false            # optional stale-artifact inventory under roots
