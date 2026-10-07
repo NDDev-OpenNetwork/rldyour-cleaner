@@ -8,6 +8,47 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+pub const MAX_REPORT_BYTES: u64 = 4 * 1024 * 1024;
+
+pub fn read_status(state_dir: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let path = state_dir.join("last-run.json");
+    crate::safety::state_file(&path, MAX_REPORT_BYTES)?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    crate::os::private_open_options(&mut options);
+    let mut content = String::new();
+    options
+        .open(path)?
+        .take(MAX_REPORT_BYTES + 1)
+        .read_to_string(&mut content)?;
+    if content.len() as u64 > MAX_REPORT_BYTES {
+        return Err(std::io::Error::other("report exceeds 4 MiB"));
+    }
+    let value: serde_json::Value = serde_json::from_str(&content).map_err(std::io::Error::other)?;
+    if value.get("tool").and_then(serde_json::Value::as_str) != Some("rldyour-cleaner")
+        || value
+            .get("version")
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+        || ["started_unix", "duration_ms", "failed"]
+            .iter()
+            .any(|key| value.get(key).and_then(serde_json::Value::as_u64).is_none())
+        || value
+            .get("dry_run")
+            .and_then(serde_json::Value::as_bool)
+            .is_none()
+        || ["entries", "caches"].iter().any(|key| {
+            value
+                .get(key)
+                .and_then(serde_json::Value::as_array)
+                .is_none()
+        })
+    {
+        return Err(std::io::Error::other("state is not a cleaner report"));
+    }
+    Ok(content)
+}
 
 #[derive(Serialize)]
 pub struct Entry {
@@ -67,6 +108,9 @@ impl Report {
     }
     pub fn save(&self, state_dir: &Path) -> std::io::Result<()> {
         let bytes = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
+        if bytes.len() as u64 > MAX_REPORT_BYTES {
+            return Err(std::io::Error::other("report exceeds 4 MiB"));
+        }
         replace_private(state_dir, "last-run.json", &bytes)
     }
     pub fn print_summary(&self) {
@@ -106,7 +150,7 @@ impl Report {
 pub(crate) fn replace_private(state_dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<()> {
     crate::safety::private_dir(state_dir)?;
     let destination = state_dir.join(name);
-    crate::safety::plain_path(&destination)?;
+    crate::safety::state_file(&destination, MAX_REPORT_BYTES)?;
     let temporary = state_dir.join(format!(
         ".report-{}-{}.tmp",
         std::process::id(),

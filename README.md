@@ -13,16 +13,16 @@ environments, package stores, build outputs and lazily loaded application data.
 
 | Area | Decision |
 |---|---|
-| uv >=0.12.17 | `uv cache prune`: the owner identifies dangling/unused entries and coordinates in-use checks through its lock |
+| uv 0.12.17 / 0.12.23 | Preserved by default: native prune removes cached environments too; explicit rebuildable-environment opt-in required |
 | Cargo >=1.88 | Its built-in automatic GC owns Cargo home; cleaner only reports its presence |
 | Go build cache | Go automatically trims unused entries; cleaner leaves it to Go |
 | Gradle caches | Gradle owns use tracking, retention and cleanup; cleaner leaves it to Gradle |
 | Other package caches, browser runtimes, Devin versions | Kept; reported if present, never partially age-evicted |
-| Project `target`, dependencies, environments, outputs | Optional read-only inventory; never removed by `run` |
+| Project `target`, dependency trees, local environments, outputs | Optional read-only inventory; never directly removed by cleaner |
 | Custom paths, Trash, pending directories from older cleaner versions | Kept; no inferred deletion authorization |
 | OS temporary files | Stock OS policy; installer never changes `/tmp` retention or runs tmpfiles cleanup |
 
-Version 0.2 adds a bounded completion ledger: successful uv GC is performed no
+Version 0.2 adds a bounded completion ledger: explicitly enabled uv GC is performed no
 more often than `[native_gc].interval_hours` (default 20 hours, allowing jitter
 around a daily schedule). Cache identity changes reset eligibility; failed GC
 does not advance it, clock rollback defers it, and malformed state fails closed.
@@ -71,7 +71,7 @@ Go module-cache clean, npx removal and browser/runtime resets are also excluded.
 Running applications and future offline installs retain these caches. Large
 cache presence is not an authorization to wipe it.
 
-The uv adapter resolves the executable, checks a supported release version,
+The optional uv adapter resolves the executable, accepts only audited releases,
 asks uv for the actual cache directory and validates the destination against
 `protect` and project roots. The directory must be dedicated, unredirected and
 carry the standard cache marker. GC receives that exact directory explicitly,
@@ -108,7 +108,7 @@ assets. Source installs use `cargo build --release --locked`. The installer
 preserves existing policy, validates it, installs the schedule and never starts
 cleanup explicitly. An overdue OS-scheduled job may run after the schedule is
 armed. Windows can also fetch the explicit
-`-Version 0.2.0` release when building from source is unavailable.
+`-Version 0.2.1` release when building from source is unavailable.
 
 | OS | Schedule |
 |---|---|
@@ -153,6 +153,7 @@ pressure_pct = 101
 
 [native_gc]
 uv = true
+uv_prune_rebuildable_environments = false # preservation default; no uv prune
 interval_hours = 20          # successful-GC minimum interval, not entry age
 
 [categories]
@@ -163,6 +164,15 @@ devin_versions = false
 cargo_registry = false
 trash = false
 ```
+
+Defaults and legacy policies preserve cached environments. Native uv prune
+requires both `uv=true` and `uv_prune_rebuildable_environments=true`. The latter
+explicitly accepts deleting centralized/cached environments that will need
+recreation. Native locks protect active uv commands; they cannot prove that an
+editor, direct Python invocation, symlink installation or future offline task
+will never need cache content. Do not enable it for cache-coupled dependencies.
+`UV_LINK_MODE=symlink` refuses GC, but absence of that variable does not certify
+historically installed packages. Unknown uv versions are retained for review.
 
 All legacy age and pressure fields still parse, but **no setting re-enables
 age-based deletion**. Age fields only affect optional project inventory.

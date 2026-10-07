@@ -26,7 +26,7 @@ fn supported_uv(text: &str) -> bool {
         return false;
     }
     let parsed: Option<Vec<u64>> = fields.iter().map(|s| s.parse().ok()).collect();
-    parsed.is_some_and(|v| (v[0], v[1], v[2]) >= (0, 12, 17))
+    parsed.is_some_and(|v| matches!((v[0], v[1], v[2]), (0, 12, 17) | (0, 12, 23)))
 }
 
 pub(super) fn evaluate(
@@ -35,7 +35,28 @@ pub(super) fn evaluate(
     cadence: &crate::maintenance::Ledger,
 ) -> CacheResult {
     if !policy.native_gc.uv {
-        return result("uv", vec![], Action::Disabled, "disabled by native_gc.uv");
+        return result(
+            "uv",
+            vec![],
+            Action::Disabled,
+            "uv GC disabled; cached environments and cache-linked dependencies are preserved",
+        );
+    }
+    if !policy.native_gc.uv_prune_rebuildable_environments {
+        return result(
+            "uv",
+            vec![],
+            Action::Kept,
+            "native uv prune removes all cached environments too; preserved unless uv_prune_rebuildable_environments is explicitly enabled after reviewing cache-linked dependencies",
+        );
+    }
+    if std::env::var("UV_LINK_MODE").is_ok_and(|mode| mode == "symlink") {
+        return result(
+            "uv",
+            vec![],
+            Action::Protected,
+            "symlink link mode couples installed packages to cache content; no automatic prune",
+        );
     }
     let Some(binary) = os::executable("uv") else {
         return result(
@@ -47,13 +68,13 @@ pub(super) fn evaluate(
     };
     let quick = Duration::from_secs(policy.command_timeout_seconds.min(5));
     let version = match process::run(uv_command(&binary).arg("--version"), quick) {
-        Ok(output) if supported_uv(&output.stdout) => output.stdout,
+        Ok(output) if !output.stdout_truncated && supported_uv(&output.stdout) => output.stdout,
         Ok(_) => {
             return result(
                 "uv",
                 vec![],
                 Action::Kept,
-                "uv >=0.12.17 with in-use GC locking is required",
+                "audited uv releases 0.12.17 or 0.12.23 are required; unreviewed versions are preserved",
             );
         }
         Err(e) => return result("uv", vec![], Action::Failed, e),
@@ -65,12 +86,12 @@ pub(super) fn evaluate(
         Ok(output) => output,
         Err(e) => return result("uv", vec![], Action::Failed, e),
     };
-    if output.stdout.lines().count() != 1 {
+    if output.stdout_truncated || output.stdout.lines().count() != 1 {
         return result(
             "uv",
             vec![],
             Action::Failed,
-            "uv returned an invalid cache directory",
+            "uv returned an invalid or truncated cache directory",
         );
     }
     let path = PathBuf::from(output.stdout);
@@ -132,16 +153,18 @@ pub(super) fn evaluate(
         &mut command,
         Duration::from_secs(policy.command_timeout_seconds),
     ) {
-        Ok(output) => result(
-            "uv",
-            vec![canonical],
-            Action::Pruned,
-            [output.stdout, output.stderr]
+        Ok(output) => {
+            let truncated = output.stdout_truncated || output.stderr_truncated;
+            let mut detail = [output.stdout, output.stderr]
                 .into_iter()
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()
-                .join("; "),
-        ),
+                .join("; ");
+            if truncated {
+                detail.push_str("; native output truncated to the reporting limit");
+            }
+            result("uv", vec![canonical], Action::Pruned, detail)
+        }
         Err(e) => result("uv", vec![canonical], Action::Failed, e),
     }
 }
@@ -152,7 +175,10 @@ mod tests {
     #[test]
     fn only_known_uv_release_versions_enable_locked_gc() {
         assert!(supported_uv("uv 0.12.17 (release)"));
-        assert!(supported_uv("uv 1.0.0"));
+        assert!(supported_uv("uv 0.12.23"));
+        assert!(!supported_uv("uv 0.12.18"));
+        assert!(!supported_uv("uv 0.12.24"));
+        assert!(!supported_uv("uv 1.0.0"));
         assert!(!supported_uv("uv 0.12.16"));
         assert!(!supported_uv("uv 0.12.17-dev"));
         assert!(!supported_uv("something 4.0.0"));

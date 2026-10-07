@@ -83,7 +83,7 @@ pub fn cli_entry() -> i32 {
                 }
             }
         }
-        Cmd::Status => match std::fs::read_to_string(os::state_dir().join("last-run.json")) {
+        Cmd::Status => match report::read_status(&os::state_dir()) {
             Ok(s) => {
                 println!("{s}");
                 0

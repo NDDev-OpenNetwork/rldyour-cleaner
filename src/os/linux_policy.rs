@@ -29,7 +29,7 @@ pub(super) fn observe(timeout: Duration) -> Vec<SystemPolicy> {
             timeout,
         );
         match output {
-            Ok(out) => {
+            Ok(out) if !out.stdout_truncated => {
                 for (id, state) in timer_states(&out.stdout) {
                     let name = match id.as_str() {
                         "apt-daily.timer" => "apt-scheduler",
@@ -41,21 +41,21 @@ pub(super) fn observe(timeout: Duration) -> Vec<SystemPolicy> {
                     results.push(observation(name, if state == "active" { "active" } else { "inactive" }, format!("native {id}: {state}; cleaner never performs a whole temporary-directory wipe")));
                 }
             }
-            Err(_) => results.push(observation(
+            _ => results.push(observation(
                 "os-scheduler",
                 "unknown",
-                "native timer status could not be queried; no maintenance/deletion inferred",
+                "native timer status could not be queried completely; no maintenance/deletion inferred",
             )),
         }
     }
     if let Some(binary) = os::executable("apt-config") {
         match process::run(Command::new(binary).args(["shell", "INTERVAL", "APT::Periodic::AutocleanInterval"]), timeout) {
-            Ok(out) => match apt_interval(&out.stdout) {
+            Ok(out) if !out.stdout_truncated => match apt_interval(&out.stdout) {
                 Some(days) if days > 0 => results.push(observation("apt-autoclean", "configured", format!("native autoclean every {days} day(s); apt-daily timer must also be active; no package uninstall"))),
                 Some(_) => results.push(observation("apt-autoclean", "disabled", "downloaded obsolete archives are not periodically pruned; opt-in apt-autoclean --enable installs a weekly policy")),
                 None => results.push(observation("apt-autoclean", "unknown", "effective interval is absent or unrecognized; no deletion inferred")),
             },
-            Err(_) => results.push(observation("apt-autoclean", "unknown", "APT policy query failed; no deletion inferred")),
+            _ => results.push(observation("apt-autoclean", "unknown", "APT policy query failed or was truncated; no deletion inferred")),
         }
     }
     results.push(observation("system-logs", "owner-policy", "journald/logrotate own retention and size; cleaner never vacuums diagnostic logs or crash reports"));
