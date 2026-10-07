@@ -9,10 +9,13 @@ invariants the guards must keep, and the verify commands (`cargo fmt`,
 `cargo clippy --all-targets -- -D warnings`, `cargo test`, `shellcheck`,
 `actionlint`). CI enforces all of them across Linux, macOS and Windows.
 
-Rules that will get a PR bounced:
+Changes must preserve these boundaries:
 
-- A removal path without its guard story — every new candidate kind needs
-  to say which gate makes it safe (artifact mtime vs project activity) and
-  why a process can't be mid-write inside it.
-- Platform-specific code outside `src/os/` and `platforms/<os>/`.
-- New dependencies without a line of justification in `Cargo.toml`.
+- New mutation adapters must use the owning tool's supported unused-entry GC,
+  document its locking/version contract and fail without manual fallback.
+- Age/liveness heuristics can improve read-only inventory, never authorize
+  recursive removal or turn installed dependencies into disposable cache.
+- Preview and run decisions share a pipeline; native-command failures remain
+  visible. Tests use synthetic fixtures, never actual user data.
+- Platform-specific implementation lives in `src/os/` or `platforms/<os>/`;
+  new dependencies require a justification in Cargo.toml.

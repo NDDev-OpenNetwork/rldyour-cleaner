@@ -54,7 +54,8 @@ extract, then run the included installer:
 Release archives contain the executable, matching installers and scheduler
 assets. Source installs use `cargo build --release --locked`. The installer
 preserves existing policy, validates it, installs the schedule and never starts
-cleanup as an installation side effect. Windows can also fetch the explicit
+cleanup explicitly. An overdue OS-scheduled job may run after the schedule is
+armed. Windows can also fetch the explicit
 `-Version 0.1.0` release when building from source is unavailable.
 
 | OS | Schedule |

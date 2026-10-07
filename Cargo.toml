@@ -13,9 +13,8 @@ categories = ["command-line-utilities"]
 # Every dependency earns its place: `clap` is the estate's CLI convention and
 # hand-rolling subcommand parsing buys nothing; `serde`+`toml` give the user an
 # editable policy file; `walkdir` is the standard robust traversal (it also
-# backs cargo-sweep); `fs2` covers the two OS-touchy bits portably — cargo's
-# `.cargo-lock` probing and the disk-pressure check (statvfs on unix,
-# GetDiskFreeSpaceEx on Windows). `serde_json` writes the last-run report the
+# backs cargo-sweep); `fs2` covers private per-user run locking and read-only disk-space
+# statistics portably (statvfs on Unix, GetDiskFreeSpaceEx on Windows). `serde_json` writes the last-run report the
 # `status` command reads back.
 [dependencies]
 clap = { version = "4", features = ["derive"] }
