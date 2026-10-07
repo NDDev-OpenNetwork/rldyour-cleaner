@@ -85,10 +85,11 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          mkdir -p dist/stage/platforms
+          mkdir -p dist/stage/platforms dist/stage/docs
           base="rldyour-cleaner-${GITHUB_REF_NAME}-${{ matrix.name }}"
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" dist/stage/
           cp LICENSE README.md CHANGELOG.md THIRD_PARTY_NOTICES.md dist/stage/
+          cp docs/*.md dist/stage/docs/
           if [ "${{ matrix.ext }}" = "zip" ]; then
             cp install.ps1 uninstall.ps1 dist/stage/
             (cd dist/stage && 7z a "${{ github.workspace }}/dist/${base}.zip" ./* >/dev/null)
